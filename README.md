@@ -1,13 +1,13 @@
-# Northstar frontend
+# Better Tracker frontend
 
-Northstar is a frontend-only personal tracking MVP for money, training,
+Better Tracker is a frontend-only personal tracking MVP for money, training,
 nutrition, body weight, savings, and net worth. It uses realistic demo data and
 stores quick-log changes in the browser so the experience can be tested before
 an API is connected.
 
-## Run locally
+## Local development
 
-Requires Node.js 22.13 or newer.
+Requires Node.js 24.
 
 ```bash
 npm install
@@ -20,8 +20,22 @@ Then open `http://localhost:3000`.
 
 ```bash
 npm run lint
+npm run typecheck
 npm test
 ```
+
+## Deploy to Vercel
+
+This is a standard Next.js App Router project and needs no custom Vercel build
+configuration. The production project is `better-tracker` and is available at
+https://better-tracker-sigma.vercel.app. Link the folder once, then deploy:
+
+```bash
+vercel link
+vercel --prod
+```
+
+The app currently requires no environment variables.
 
 ## Current scope
 

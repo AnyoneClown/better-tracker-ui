@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { headers } from "next/headers";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -13,42 +12,38 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-export async function generateMetadata(): Promise<Metadata> {
-  const requestHeaders = await headers();
-  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
-  const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
-  const origin = `${protocol}://${host}`;
-  const title = "Northstar — Your life, in one view";
-  const description = "A calm personal dashboard for money, training, nutrition, body goals, and everyday progress.";
+const deploymentHost = process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL;
+const metadataBase = new URL(deploymentHost ? `https://${deploymentHost}` : "http://localhost:3000");
+const title = "Better Tracker — Your life, in one view";
+const description = "A calm personal dashboard for money, training, nutrition, body goals, and everyday progress.";
 
-  return {
+export const metadata: Metadata = {
+  metadataBase,
+  applicationName: "Better Tracker",
+  title,
+  description,
+  icons: {
+    icon: "/favicon.svg",
+    shortcut: "/favicon.svg",
+  },
+  openGraph: {
     title,
     description,
-    icons: {
-      icon: "/favicon.svg",
-      shortcut: "/favicon.svg",
-    },
-    openGraph: {
-      title,
-      description,
-      type: "website",
-      images: [{ url: `${origin}/og.png`, width: 1200, height: 630, alt: "Northstar — your life, in one view" }],
-    },
-    twitter: {
-      card: "summary_large_image",
-      title,
-      description,
-      images: [`${origin}/og.png`],
-    },
-  };
-}
+    type: "website",
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Better Tracker — your life, in one view" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title,
+    description,
+    images: ["/og.png"],
+  },
+};
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable}`}>
-        {children}
-      </body>
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
+      <body>{children}</body>
     </html>
   );
 }

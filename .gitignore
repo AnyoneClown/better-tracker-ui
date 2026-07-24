@@ -21,6 +21,19 @@
 # misc
 .DS_Store
 *.pem
+*.key
+*.p12
+*.pfx
+*.log
+/.openai/
+
+# editor and tooling
+.idea/
+.vscode/
+*.swp
+*.swo
+.eslintcache
+/.turbo/
 
 # debug
 npm-debug.log*
@@ -30,6 +43,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+!.env.*.example
 
 # vercel
 .vercel
@@ -39,5 +54,3 @@ next-env.d.ts
 *.tsbuildinfo
 /dist/
 /.wrangler/
-/outputs/
-/work/

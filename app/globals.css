@@ -102,7 +102,7 @@ select:focus-visible {
   background: transparent;
   font-size: 13px;
   font-weight: 720;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.08em;
 }
 
 .brand-mark {
@@ -117,6 +117,30 @@ select:focus-visible {
   color: var(--forest-dark);
   background: var(--lime);
   box-shadow: 0 6px 18px rgb(0 0 0 / 0.12);
+}
+
+.brand-mark svg {
+  width: 23px;
+  height: 23px;
+  overflow: visible;
+  fill: var(--forest-dark);
+  stroke: currentColor;
+  stroke-width: 2.15;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.brand-mark svg path {
+  fill: none;
+}
+
+.brand-mark svg circle {
+  stroke: var(--lime);
+  stroke-width: 1.2;
+}
+
+.brand-wordmark {
+  white-space: nowrap;
 }
 
 .sidebar-nav {

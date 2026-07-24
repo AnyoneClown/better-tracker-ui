@@ -74,6 +74,13 @@ const initialState: TrackerState = {
   activities: initialActivities,
 };
 
+const storageKeys = {
+  tracker: "better-tracker-demo",
+  month: "better-tracker-month",
+  legacyTracker: "northstar-demo",
+  legacyMonth: "northstar-month",
+} as const;
+
 const monthPresets: Record<string, TrackerState> = {
   "July 2026": initialState,
   "June 2026": {
@@ -170,6 +177,18 @@ function IconBadge({ kind, tone }: { kind: LogType; tone: Activity["tone"] }) {
   );
 }
 
+function BrandMark() {
+  return (
+    <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+      <path d="M7 22.5 12.2 16.9 16.5 19.2 24 10.5" />
+      <path d="M20 10.5h4v4" />
+      <circle cx="7" cy="22.5" r="1.35" />
+      <circle cx="12.2" cy="16.9" r="1.35" />
+      <circle cx="16.5" cy="19.2" r="1.35" />
+    </svg>
+  );
+}
+
 export default function Home() {
   const [tracker, setTracker] = useState<TrackerState>(initialState);
   const [activeNav, setActiveNav] = useState("Overview");
@@ -185,11 +204,13 @@ export default function Home() {
   const lastFocusedRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("northstar-demo");
-    const savedMonth = window.localStorage.getItem("northstar-month");
+    const saved = window.localStorage.getItem(storageKeys.tracker) ?? window.localStorage.getItem(storageKeys.legacyTracker);
+    const savedMonth = window.localStorage.getItem(storageKeys.month) ?? window.localStorage.getItem(storageKeys.legacyMonth);
     if (saved) {
       const restored = restoreTrackerState(saved);
       if (restored) {
+        window.localStorage.removeItem(storageKeys.legacyTracker);
+        window.localStorage.removeItem(storageKeys.legacyMonth);
         const timer = window.setTimeout(() => {
           setTracker(restored);
           if (savedMonth && monthPresets[savedMonth]) setMonth(savedMonth);
@@ -197,7 +218,8 @@ export default function Home() {
         }, 0);
         return () => window.clearTimeout(timer);
       } else {
-        window.localStorage.removeItem("northstar-demo");
+        window.localStorage.removeItem(storageKeys.tracker);
+        window.localStorage.removeItem(storageKeys.legacyTracker);
       }
     }
     const timer = window.setTimeout(() => setHydrated(true), 0);
@@ -206,8 +228,8 @@ export default function Home() {
 
   useEffect(() => {
     if (hydrated) {
-      window.localStorage.setItem("northstar-demo", JSON.stringify(tracker));
-      window.localStorage.setItem("northstar-month", month);
+      window.localStorage.setItem(storageKeys.tracker, JSON.stringify(tracker));
+      window.localStorage.setItem(storageKeys.month, month);
     }
   }, [tracker, month, hydrated]);
 
@@ -372,9 +394,9 @@ export default function Home() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <button className="brand" onClick={() => navigateTo("Overview", "overview")} aria-label="Northstar home">
-          <span className="brand-mark" aria-hidden="true"><Sparkles size={18} strokeWidth={2.4} /></span>
-          <span>NORTHSTAR</span>
+        <button className="brand" onClick={() => navigateTo("Overview", "overview")} aria-label="Better Tracker home">
+          <span className="brand-mark"><BrandMark /></span>
+          <span className="brand-wordmark">BETTER TRACKER</span>
         </button>
 
         <nav className="sidebar-nav" aria-label="Primary navigation">
@@ -411,9 +433,9 @@ export default function Home() {
       </aside>
 
       <header className="mobile-header">
-        <button className="brand" onClick={() => navigateTo("Overview", "overview")} aria-label="Northstar home">
-          <span className="brand-mark"><Sparkles size={17} /></span>
-          <span>NORTHSTAR</span>
+        <button className="brand" onClick={() => navigateTo("Overview", "overview")} aria-label="Better Tracker home">
+          <span className="brand-mark"><BrandMark /></span>
+          <span className="brand-wordmark">BETTER TRACKER</span>
         </button>
         <button className="icon-button" aria-label="Notifications" onClick={() => showNotice("You’re all caught up")}><Bell size={19} /><span className="notification-dot" /></button>
       </header>
@@ -601,7 +623,7 @@ export default function Home() {
           </article>
         </section>
 
-        <footer className="page-footer"><span>Northstar keeps your personal progress in one calm place.</span><button onClick={resetDemo}><RotateCcw size={14} /> Reset demo data</button></footer>
+        <footer className="page-footer"><span>Better Tracker keeps your personal progress in one calm place.</span><button onClick={resetDemo}><RotateCcw size={14} /> Reset demo data</button></footer>
       </main>
 
       <nav className="mobile-nav" aria-label="Mobile navigation">

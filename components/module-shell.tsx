@@ -12,6 +12,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { AccountSummary } from "@/components/account-summary";
+import type { AuthUser } from "@/lib/auth";
+
 const navigation = [
   { label: "Overview", icon: LayoutDashboard, href: "/" },
   { label: "Money", icon: WalletCards, href: "/money" },
@@ -50,7 +53,7 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
   );
 }
 
-export function ModuleShell({ children }: { children: ReactNode }) {
+export function ModuleShell({ children, user }: { children: ReactNode; user: AuthUser }) {
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -74,10 +77,7 @@ export function ModuleShell({ children }: { children: ReactNode }) {
           <div className="focus-meta"><span>Real records</span><span>Synced</span></div>
         </div>
 
-        <Link className="profile-row" href="/">
-          <span className="avatar">BT</span>
-          <span className="profile-copy"><strong>Personal tracker</strong><small>Open overview</small></span>
-        </Link>
+        <AccountSummary user={user} />
       </aside>
 
       <header className="mobile-header">
@@ -85,7 +85,10 @@ export function ModuleShell({ children }: { children: ReactNode }) {
           <span className="brand-mark"><BrandMark /></span>
           <span className="brand-wordmark">BETTER TRACKER</span>
         </Link>
-        <span className="live-indicator"><span /> Live</span>
+        <div className="mobile-header-actions">
+          <span className="live-indicator"><span /> Live</span>
+          <AccountSummary user={user} compact />
+        </div>
       </header>
 
       <main className="main-content module-main">{children}</main>

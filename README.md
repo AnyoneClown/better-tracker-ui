@@ -22,6 +22,52 @@ The browser calls the same-origin `/api/backend/*` route. Next.js forwards those
 requests to FastAPI on the server, so the API URL is not included in the browser
 bundle and the production frontend does not require a CORS exception.
 
+## Authentication
+
+The frontend supports the backend's multi-user authentication flow:
+
+- `/register` creates an account and signs the new user in.
+- `/login` exchanges an email address and password for a backend access token.
+- The Next.js auth route stores that token in an `HttpOnly`, same-site cookie;
+  browser JavaScript never receives or persists the bearer token.
+- State-changing proxy and authentication requests reject foreign browser
+  origins, providing an additional CSRF boundary around the session cookie.
+- Server-rendered dashboard routes validate the session with
+  `GET /api/v1/auth/me` before rendering.
+- The same-origin backend proxy adds the bearer token to every tracker request,
+  clears an invalid session after a `401`, and the client returns the user to
+  login when a session expires.
+- Signing out removes the frontend session cookie. The backend does not expose a
+  token-revocation endpoint, so an access token otherwise remains valid until its
+  configured expiration time.
+
+The backend also needs its `JWT_SECRET_KEY`, issuer, audience, and token lifetime
+settings configured as described in the backend README.
+
+## Monobank
+
+The Money workspace supports a separate Monobank Personal API connection for
+each authenticated user. A user pastes the token into a password field; the
+browser submits it once and never writes it to local or session storage. The
+backend validates and encrypts it, and subsequent status responses contain only
+safe client, card, jar, progress, and timestamp fields.
+
+Money defaults to UAH and offers every other currency present in local or
+Monobank data as a separate view without FX conversion. Sync is manual and
+returns immediately while the backend imports card statements in the
+background. The date picker defaults to the latest 31 calendar days; users can
+select a longer historical period, which the backend imports in 31-day batches.
+Progress polling continues even when two polls return the same value, and the
+complete Money data tree is refreshed once the background sync finishes.
+Pending and user-excluded transactions remain visible but do not affect
+summaries. A card-level action can delete all of that card's imported
+transactions without disconnecting it; a later sync can import them again.
+Monobank jars are displayed separately from local Savings Goals.
+
+Use this Personal API flow only for a private owner/family deployment. A public
+service must use Monobank's Provider API instead. Both the deployed frontend and
+backend must use HTTPS before a personal token is submitted.
+
 ## Validate
 
 ```bash
@@ -45,7 +91,8 @@ vercel --prod
 
 The value should be the backend origin, for example
 `https://api.example.com`, without `/api/v1` at the end. Vercel cannot reach a
-backend that only listens on `localhost`.
+backend that only listens on `localhost`. Use an HTTPS origin in production,
+especially when Monobank connections are enabled.
 
 ## Current data flow
 
@@ -56,6 +103,8 @@ backend that only listens on `localhost`.
 - Backend-aware undo for newly created and updated records
 - Same-day nutrition aggregation and weight-entry updates that match the API model
 - Loading, empty, refresh, and backend error states
-
-The API is currently single-user and does not expose authentication. Add an auth
-layer before making private tracker data available on a public backend URL.
+- Account registration, login, authenticated route protection, session-expiry
+  recovery, and logout
+- Per-user tracker records provided by the backend's ownership checks
+- Per-user encrypted Monobank connection, manual sync progress, read-only bank
+  transactions, UAH-first currency views, cards, credit limits, and jars

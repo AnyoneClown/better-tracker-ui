@@ -1,4 +1,9 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+
+import { AUTH_COOKIE_NAME } from "@/lib/auth";
+import { backendBaseUrl } from "@/lib/backend";
+import { isSameOriginMutation } from "@/lib/request-security";
+import { clearSessionCookie } from "@/lib/session-cookie";
 
 export const dynamic = "force-dynamic";
 
@@ -6,22 +11,14 @@ type RouteContext = {
   params: Promise<{ path: string[] }>;
 };
 
-function backendBaseUrl(): URL | null {
-  const configured = process.env.BETTER_TRACKER_API_URL;
-  const candidate = configured
-    ?? (process.env.NODE_ENV === "development" ? "http://127.0.0.1:8000" : null);
-  if (!candidate) return null;
-
-  try {
-    const url = new URL(candidate);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-    return url;
-  } catch {
-    return null;
-  }
-}
-
 async function proxy(request: NextRequest, context: RouteContext): Promise<Response> {
+  if (!isSameOriginMutation(request)) {
+    return Response.json(
+      { detail: "Cross-origin requests are not allowed" },
+      { status: 403, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+
   const baseUrl = backendBaseUrl();
   if (!baseUrl) {
     return Response.json(
@@ -34,14 +31,22 @@ async function proxy(request: NextRequest, context: RouteContext): Promise<Respo
 
   const { path } = await context.params;
   const safePath = path.map((segment) => encodeURIComponent(segment)).join("/");
+  if (safePath.startsWith("api/v1/auth/")) {
+    return Response.json(
+      { detail: "Use the frontend authentication routes" },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
+    );
+  }
   const target = new URL(safePath, `${baseUrl.toString().replace(/\/+$/, "")}/`);
   target.search = request.nextUrl.search;
 
   const headers = new Headers();
-  for (const header of ["accept", "content-type", "authorization"] as const) {
+  for (const header of ["accept", "content-type"] as const) {
     const value = request.headers.get(header);
     if (value) headers.set(header, value);
   }
+  const accessToken = request.cookies.get(AUTH_COOKIE_NAME)?.value;
+  if (accessToken) headers.set("authorization", `Bearer ${accessToken}`);
 
   let upstream: Response;
   try {
@@ -64,16 +69,19 @@ async function proxy(request: NextRequest, context: RouteContext): Promise<Respo
   const responseHeaders = new Headers();
   const contentType = upstream.headers.get("content-type");
   if (contentType) responseHeaders.set("content-type", contentType);
+  const authenticate = upstream.headers.get("www-authenticate");
+  if (authenticate) responseHeaders.set("www-authenticate", authenticate);
   responseHeaders.set("cache-control", "no-store");
 
-  return new Response(upstream.status === 204 ? null : upstream.body, {
+  const response = new NextResponse(upstream.status === 204 ? null : upstream.body, {
     status: upstream.status,
     headers: responseHeaders,
   });
+  if (upstream.status === 401 && accessToken) clearSessionCookie(response);
+  return response;
 }
 
 export const GET = proxy;
 export const POST = proxy;
 export const PATCH = proxy;
 export const DELETE = proxy;
-

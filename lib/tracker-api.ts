@@ -1,3 +1,5 @@
+import { redirectToLoginForExpiredSession } from "@/lib/client-auth";
+
 export type LogType =
   | "Expense"
   | "Income"
@@ -167,6 +169,9 @@ type FinancialTransaction = Entity & {
   occurred_on: string;
   currency: string;
   description: string | null;
+  source: "manual" | "monobank";
+  hold: boolean;
+  excluded_from_summary: boolean;
 };
 
 type Workout = Entity & {
@@ -342,8 +347,11 @@ export async function apiRequest<T>(
 
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as ApiProblem | null;
+    if (response.status === 401) redirectToLoginForExpiredSession();
     throw new TrackerApiError(
-      problemMessage(payload, `Backend request failed (${response.status})`),
+      response.status === 401
+        ? "Your session expired. Please sign in again."
+        : problemMessage(payload, `Backend request failed (${response.status})`),
       response.status,
     );
   }
@@ -476,6 +484,9 @@ export async function fetchDashboard(
     )),
   );
   const contributions = contributionPages.flatMap((page) => page.items);
+  const includedTransactions = transactions.items.filter(
+    (item) => !item.hold && !item.excluded_from_summary,
+  );
 
   const categories = finance.categories
     .filter((category) => numberFrom(category.expenses) > 0 || category.budget !== null)
@@ -565,7 +576,7 @@ export async function fetchDashboard(
       id: `transaction-${item.id}`,
       kind: item.kind === "expense" ? "Expense" : "Income",
       title: item.description || titleCase(item.category),
-      detail: `${titleCase(item.category)} · ${activityDate(item.occurred_on, period)}`,
+      detail: `${titleCase(item.category)} · ${activityDate(item.occurred_on, period)}${item.hold ? " · Pending" : item.excluded_from_summary ? " · Excluded" : ""}`,
       value: `${item.kind === "expense" ? "−" : "+"}${formatMoney(numberFrom(item.amount), item.currency)}`,
       tone: item.kind === "expense" ? "orange" : "green",
       occurredAt: dateOnlySortKey(item.occurred_on, item.created_at),
@@ -635,11 +646,11 @@ export async function fetchDashboard(
       net: numberFrom(finance.net),
       totalBudget: numberFrom(finance.total_budget),
       budgetRemaining: numberFrom(finance.budget_remaining),
-      spentOnReferenceDate: transactions.items
+      spentOnReferenceDate: includedTransactions
         .filter((item) => item.kind === "expense" && item.occurred_on === period.referenceDate)
         .reduce((total, item) => total + numberFrom(item.amount), 0),
       categories,
-      transactionCount: transactions.total,
+      transactionCount: includedTransactions.length,
     },
     training: {
       monthCount: workoutSummary.workout_count,

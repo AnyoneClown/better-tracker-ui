@@ -5,35 +5,46 @@ import {
   ArrowUpRight,
   Banknote,
   Camera,
+  CircleAlert,
   CircleDollarSign,
+  CloudDownload,
   CreditCard,
   Edit3,
   Landmark,
+  Link2,
   Minus,
   PiggyBank,
   Plus,
   ReceiptText,
+  RefreshCw,
+  ShieldCheck,
   Target,
   Trash2,
   TrendingUp,
+  Unplug,
   WalletCards,
 } from "lucide-react";
 import type { FormEvent } from "react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { DataNotice, EmptyState, ModuleDialog, ModuleHeader, ModuleState, ModuleToast, SaveActions } from "@/components/module-ui";
 import { useModuleData } from "@/hooks/use-module-data";
 import {
   asNumber,
+  connectMonobank,
   createRecord,
+  deleteMonobankAccountTransactions,
   deleteRecord,
+  disconnectMonobank,
   fetchMoneyData,
   type FinancialAccount,
   type FinancialTransaction,
+  type MonobankAccount,
   type MonthlyBudget,
   type NetWorthSnapshot,
   type SavingsContribution,
   type SavingsGoal,
+  startMonobankSync,
   updateRecord,
 } from "@/lib/module-api";
 import { formatMoney, getPeriod } from "@/lib/tracker-api";
@@ -44,7 +55,8 @@ type MoneyDialog =
   | { kind: "budget"; record?: MonthlyBudget }
   | { kind: "account"; record?: FinancialAccount }
   | { kind: "goal"; record?: SavingsGoal }
-  | { kind: "contribution"; goal: SavingsGoal; record?: SavingsContribution };
+  | { kind: "contribution"; goal: SavingsGoal; record?: SavingsContribution }
+  | { kind: "monobank-connect" };
 
 function shortDate(date: string): string {
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })
@@ -55,18 +67,77 @@ function titleCase(value: string): string {
   return value.split(/\s+/).filter(Boolean).map((part) => part[0].toUpperCase() + part.slice(1)).join(" ");
 }
 
+function dateTime(value: string | null): string {
+  if (!value) return "Never";
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function kyivDate(date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Europe/Kyiv",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function shiftDate(value: string, days: number): string {
+  const date = new Date(`${value}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: string }) {
   const [periodKey, setPeriodKey] = useState(initialPeriodKey);
-  const { data, loading, error, refresh } = useModuleData(periodKey, fetchMoneyData);
+  const [selectedCurrency, setSelectedCurrency] = useState("UAH");
+  const [syncDateTo, setSyncDateTo] = useState(() => kyivDate());
+  const [syncDateFrom, setSyncDateFrom] = useState(() => shiftDate(kyivDate(), -30));
+  const moneyLoader = useCallback((requestKey: string, signal?: AbortSignal) => {
+    const [requestedPeriod, requestedCurrency] = requestKey.split("|");
+    return fetchMoneyData(requestedPeriod, requestedCurrency, signal);
+  }, []);
+  const { data, loading, error, refresh } = useModuleData(`${periodKey}|${selectedCurrency}`, moneyLoader);
   const [tab, setTab] = useState<"cashflow" | "wealth">("cashflow");
   const [dialog, setDialog] = useState<MoneyDialog | null>(null);
   const [saving, setSaving] = useState(false);
+  const [integrationBusy, setIntegrationBusy] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
+  const previousSyncStatus = useRef<"idle" | "running" | "succeeded" | "failed" | null>(null);
+  const today = kyivDate();
   const period = data?.period ?? getPeriod(periodKey, new Date(`${initialPeriodKey}-15T12:00:00Z`));
-  const currency = data?.finance.currency ?? "USD";
+  const currency = data?.finance.currency ?? selectedCurrency;
   const money = useCallback((value: number) => formatMoney(value, currency), [currency]);
   const closeDialog = useCallback(() => setDialog(null), []);
   const goalsById = useMemo(() => new Map(data?.goals.map((goal) => [goal.id, goal.name]) ?? []), [data?.goals]);
+  const currencies = useMemo(() => {
+    const values = new Set(["UAH", selectedCurrency, ...(data?.currencies ?? [])]);
+    return Array.from(values).sort((left, right) => left === "UAH" ? -1 : right === "UAH" ? 1 : left.localeCompare(right));
+  }, [data?.currencies, selectedCurrency]);
+
+  useEffect(() => {
+    if (data?.monobank.sync_status !== "running") return;
+    const timer = window.setInterval(refresh, 2500);
+    return () => window.clearInterval(timer);
+  }, [data?.monobank.sync_status, refresh]);
+
+  useEffect(() => {
+    const currentStatus = data?.monobank.sync_status ?? null;
+    const previousStatus = previousSyncStatus.current;
+    previousSyncStatus.current = currentStatus;
+    if (previousStatus !== "running" || currentStatus === "running") return;
+    const timer = window.setTimeout(() => {
+      refresh();
+      if (currentStatus === "succeeded") {
+        setToast({ message: "Monobank sync complete. Money data refreshed.", tone: "success" });
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [data?.monobank.sync_status, refresh]);
 
   const reportError = (reason: unknown, fallback: string) => {
     setToast({ message: reason instanceof Error ? reason.message : fallback, tone: "error" });
@@ -76,13 +147,18 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
     event.preventDefault();
     if (dialog?.kind !== "transaction") return;
     const form = new FormData(event.currentTarget);
-    const payload = {
+    const isMonobank = dialog.record?.source === "monobank";
+    const payload = isMonobank ? {
+      category: String(form.get("category")).trim(),
+      excluded_from_summary: form.get("excluded_from_summary") === "on",
+    } : {
       kind: String(form.get("kind")),
       amount: Number(form.get("amount")),
       category: String(form.get("category")).trim(),
       occurred_on: String(form.get("occurred_on")),
       currency,
       description: String(form.get("description") ?? "").trim() || null,
+      excluded_from_summary: form.get("excluded_from_summary") === "on",
     };
     setSaving(true);
     try {
@@ -94,6 +170,71 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
     } catch (reason) {
       reportError(reason, "Could not save the transaction.");
     } finally { setSaving(false); }
+  };
+
+  const saveMonobankConnection = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (dialog?.kind !== "monobank-connect") return;
+    const form = new FormData(event.currentTarget);
+    const token = String(form.get("monobank_token") ?? "").trim();
+    setSaving(true);
+    try {
+      await connectMonobank(token);
+      setDialog(null);
+      setToast({ message: "Monobank connected", tone: "success" });
+      refresh();
+    } catch (reason) {
+      reportError(reason, "Could not connect Monobank.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const syncMonobank = async () => {
+    if (syncDateFrom > syncDateTo) {
+      setToast({ message: "Sync start date must be on or before the end date.", tone: "error" });
+      return;
+    }
+    setIntegrationBusy(true);
+    try {
+      await startMonobankSync(syncDateFrom, syncDateTo);
+      setToast({ message: `Monobank sync started for ${syncDateFrom} – ${syncDateTo}`, tone: "success" });
+      refresh();
+    } catch (reason) {
+      reportError(reason, "Could not start Monobank sync.");
+    } finally {
+      setIntegrationBusy(false);
+    }
+  };
+
+  const removeMonobankTransactions = async (account: MonobankAccount) => {
+    const accountLabel = account.masked_pan[0] ?? `${titleCase(account.card_type)} ${account.currency}`;
+    if (!window.confirm(`Delete every imported transaction for ${accountLabel}? The card stays connected, and a future sync can import these transactions again.`)) return;
+    setIntegrationBusy(true);
+    try {
+      const result = await deleteMonobankAccountTransactions(account.id);
+      const suffix = result.deleted_count === 1 ? "transaction" : "transactions";
+      setToast({ message: `${result.deleted_count} imported ${suffix} deleted`, tone: "success" });
+      refresh();
+    } catch (reason) {
+      reportError(reason, "Could not delete imported Monobank transactions.");
+    } finally {
+      setIntegrationBusy(false);
+    }
+  };
+
+  const removeMonobankConnection = async () => {
+    if (!window.confirm("Disconnect Monobank? Imported transactions will remain in your ledger.")) return;
+    setIntegrationBusy(true);
+    try {
+      await disconnectMonobank();
+      setToast({ message: "Monobank disconnected", tone: "success" });
+      refresh();
+    } catch (reason) {
+      reportError(reason, "Could not disconnect Monobank.");
+    } finally {
+      setIntegrationBusy(false);
+    }
   };
 
   const saveBudget = async (event: FormEvent<HTMLFormElement>) => {
@@ -216,6 +357,7 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
       : dialog?.kind === "account" ? `${dialog.record ? "Edit" : "Add"} account`
         : dialog?.kind === "goal" ? `${dialog.record ? "Edit" : "Add"} savings goal`
           : dialog?.kind === "contribution" ? `${dialog.record ? "Edit" : "Add"} savings activity`
+            : dialog?.kind === "monobank-connect" ? "Connect Monobank"
             : "Money entry";
 
   const totalIncome = asNumber(data?.finance.total_income);
@@ -225,17 +367,106 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
 
   return (
     <>
-      <ModuleHeader eyebrow="Money" title="Know where every dollar is going." description="Manage cash flow, budgets, accounts, savings, and net worth from one live workspace." periodKey={periodKey} initialPeriodKey={initialPeriodKey} onPeriodChange={setPeriodKey} onAdd={() => setDialog(tab === "cashflow" ? { kind: "transaction" } : { kind: "account" })} addLabel={tab === "cashflow" ? "Add transaction" : "Add account"} />
-      <div className="module-tabs" role="tablist" aria-label="Money view">
-        <button role="tab" aria-selected={tab === "cashflow"} className={tab === "cashflow" ? "active" : ""} onClick={() => setTab("cashflow")}><ReceiptText size={16} /> Cash flow</button>
-        <button role="tab" aria-selected={tab === "wealth"} className={tab === "wealth" ? "active" : ""} onClick={() => setTab("wealth")}><Landmark size={16} /> Wealth & savings</button>
+      <ModuleHeader eyebrow="Money" title="Know where your money is going." description="Manage cash flow, budgets, accounts, savings, and net worth from one live workspace." periodKey={periodKey} initialPeriodKey={initialPeriodKey} onPeriodChange={setPeriodKey} onAdd={() => setDialog(tab === "cashflow" ? { kind: "transaction" } : { kind: "account" })} addLabel={tab === "cashflow" ? "Add transaction" : "Add account"} />
+      <div className="money-view-controls">
+        <div className="module-tabs" role="tablist" aria-label="Money view">
+          <button role="tab" aria-selected={tab === "cashflow"} className={tab === "cashflow" ? "active" : ""} onClick={() => setTab("cashflow")}><ReceiptText size={16} /> Cash flow</button>
+          <button role="tab" aria-selected={tab === "wealth"} className={tab === "wealth" ? "active" : ""} onClick={() => setTab("wealth")}><Landmark size={16} /> Wealth & savings</button>
+        </div>
+        <label className="currency-picker">
+          <span>Currency</span>
+          <select value={selectedCurrency} onChange={(event) => setSelectedCurrency(event.target.value)} aria-label="Select money currency">
+            {currencies.map((item) => <option value={item} key={item}>{item}</option>)}
+          </select>
+        </label>
       </div>
       {data && <DataNotice loading={loading} error={error} onRetry={refresh} />}
+      {data && (
+        <section className={`monobank-panel ${data.monobank.connected ? "connected" : "disconnected"}`} aria-label="Monobank integration">
+          <div className="monobank-heading">
+            <span className="monobank-mark"><Landmark size={20} /></span>
+            <div>
+              <p className="eyebrow">Bank connection</p>
+              <h2>{data.monobank.connected ? data.monobank.client_name : "Monobank"}</h2>
+              <p>{data.monobank.connected ? `Last sync: ${dateTime(data.monobank.last_sync_completed_at)}` : "Import personal cards, balances, jars, and the latest 31 days of transactions."}</p>
+            </div>
+            {data.monobank.connected ? (
+              <span className={`connection-badge ${data.monobank.sync_status ?? "idle"}`}><span /> {data.monobank.sync_status === "running" ? "Syncing" : "Connected"}</span>
+            ) : (
+              <button className="monobank-connect-button" onClick={() => setDialog({ kind: "monobank-connect" })}><Link2 size={16} /> Connect Monobank</button>
+            )}
+          </div>
+
+          {data.monobank.connected && (
+            <>
+              <div className="monobank-actions">
+                <div>
+                  <span>{data.monobank.accounts.length} cards</span>
+                  <span>{data.monobank.jars.length} jars</span>
+                  <span>Read-only bank data</span>
+                </div>
+                <button className="quiet-danger-button" disabled={integrationBusy} onClick={() => void removeMonobankConnection()}><Unplug size={15} /> Disconnect</button>
+              </div>
+
+              <div className="monobank-sync-controls">
+                <div className="monobank-sync-range">
+                  <label><span>From</span><input type="date" value={syncDateFrom} max={syncDateTo} disabled={integrationBusy || data.monobank.sync_status === "running"} onChange={(event) => setSyncDateFrom(event.target.value)} /></label>
+                  <label><span>To</span><input type="date" value={syncDateTo} min={syncDateFrom} max={today} disabled={integrationBusy || data.monobank.sync_status === "running"} onChange={(event) => setSyncDateTo(event.target.value)} /></label>
+                  <button className="secondary-button" disabled={integrationBusy || data.monobank.sync_status === "running" || !syncDateFrom || !syncDateTo} onClick={() => void syncMonobank()}><RefreshCw size={15} className={data.monobank.sync_status === "running" ? "spin" : ""} /> {data.monobank.sync_status === "running" ? "Syncing…" : "Sync period"}</button>
+                </div>
+                <p>Defaults to the latest 31 calendar days. Longer periods are imported in 31-day batches and may take several minutes per card.</p>
+              </div>
+
+              {data.monobank.sync_status === "running" && (
+                <div className="monobank-sync-progress" role="status">
+                  <div><span><CloudDownload size={15} /> Importing statement batch {Math.min(data.monobank.sync_progress_current + 1, Math.max(data.monobank.sync_progress_total, 1))} of {data.monobank.sync_progress_total}</span><strong>{data.monobank.sync_progress_current}/{data.monobank.sync_progress_total}</strong></div>
+                  <div className="sync-progress-track"><span style={{ width: `${data.monobank.sync_progress_total ? Math.min((data.monobank.sync_progress_current / data.monobank.sync_progress_total) * 100, 100) : 0}%` }} /></div>
+                  <p>{data.monobank.sync_date_from && data.monobank.sync_date_to ? `${data.monobank.sync_date_from} – ${data.monobank.sync_date_to}. ` : ""}Monobank allows statement requests once per minute, so multi-card or multi-month syncs can take several minutes.</p>
+                </div>
+              )}
+
+              {data.monobank.sync_status === "failed" && data.monobank.sync_error && (
+                <div className="monobank-error" role="alert"><CircleAlert size={16} /><span>{data.monobank.sync_error}</span></div>
+              )}
+
+              {data.monobank.accounts.length > 0 && (
+                <div className="monobank-live-grid">
+                  {data.monobank.accounts.map((account) => (
+                    <article className="monobank-account-card" key={account.id}>
+                      <div><span className="mono-card-icon"><CreditCard size={17} /></span><span><strong>{account.masked_pan[0] ?? titleCase(account.card_type)}</strong><small>{titleCase(account.card_type)} · {account.currency}</small></span></div>
+                      <strong className={asNumber(account.balance) < 0 ? "negative" : ""}>{formatMoney(asNumber(account.balance), account.currency)}</strong>
+                      <p>Credit limit <span>{formatMoney(asNumber(account.credit_limit), account.currency)}</span></p>
+                      <button className="monobank-delete-transactions" disabled={integrationBusy || data.monobank.sync_status === "running"} onClick={() => void removeMonobankTransactions(account)}><Trash2 size={13} /> Delete imported transactions</button>
+                    </article>
+                  ))}
+                </div>
+              )}
+
+              {data.monobank.jars.length > 0 && (
+                <div className="monobank-jars">
+                  <div className="monobank-subheading"><div><PiggyBank size={16} /><span><strong>Monobank jars</strong><small>Separate from local Savings Goals</small></span></div></div>
+                  <div className="monobank-jar-grid">
+                    {data.monobank.jars.map((jar) => {
+                      const progress = Math.min(asNumber(jar.progress_percent), 100);
+                      return (
+                        <article className="monobank-jar-card" key={jar.id}>
+                          <div><strong>{jar.title}</strong><span>{formatMoney(asNumber(jar.balance), jar.currency)}{jar.goal !== null ? ` of ${formatMoney(asNumber(jar.goal), jar.currency)}` : ""}</span></div>
+                          {jar.goal !== null && <><div className="goal-progress"><span style={{ width: `${progress}%` }} /></div><small>{Math.round(progress)}% funded</small></>}
+                        </article>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </section>
+      )}
       {!data ? <ModuleState error={error} onRetry={refresh} /> : tab === "cashflow" ? (
         <>
           <section className="module-stats module-stats-four" aria-label="Cash flow summary">
-            <article className="module-stat"><span className="stat-icon lime"><ArrowUpRight size={18} /></span><p>Income</p><strong>{money(totalIncome)}</strong><em>{data.transactions.filter((item) => item.kind === "income").length} entries</em></article>
-            <article className="module-stat"><span className="stat-icon amber"><ArrowDownRight size={18} /></span><p>Expenses</p><strong>{money(totalExpenses)}</strong><em>{data.transactions.filter((item) => item.kind === "expense").length} entries</em></article>
+            <article className="module-stat"><span className="stat-icon lime"><ArrowUpRight size={18} /></span><p>Income</p><strong>{money(totalIncome)}</strong><em>{data.transactions.filter((item) => item.kind === "income" && !item.hold && !item.excluded_from_summary).length} included entries</em></article>
+            <article className="module-stat"><span className="stat-icon amber"><ArrowDownRight size={18} /></span><p>Expenses</p><strong>{money(totalExpenses)}</strong><em>{data.transactions.filter((item) => item.kind === "expense" && !item.hold && !item.excluded_from_summary).length} included entries</em></article>
             <article className="module-stat"><span className="stat-icon forest"><TrendingUp size={18} /></span><p>Net cash flow</p><strong className={asNumber(data.finance.net) < 0 ? "negative" : ""}>{money(asNumber(data.finance.net))}</strong><em>Income minus expenses</em></article>
             <article className="module-stat"><span className="stat-icon blue"><WalletCards size={18} /></span><p>Budget left</p><strong className={budgetRemaining < 0 ? "negative" : ""}>{totalBudget ? money(budgetRemaining) : "—"}</strong><em>{totalBudget ? `${money(totalBudget)} planned` : "No budgets yet"}</em></article>
           </section>
@@ -267,11 +498,11 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
               {data.transactions.length > 0 ? (
                 <div className="transaction-list">
                   {data.transactions.map((transaction) => (
-                    <article className="transaction-row" key={transaction.id}>
+                    <article className={`transaction-row ${transaction.hold ? "pending" : ""} ${transaction.excluded_from_summary ? "excluded" : ""}`} key={transaction.id}>
                       <span className={`transaction-icon ${transaction.kind}`} >{transaction.kind === "income" ? <ArrowUpRight size={17} /> : <ArrowDownRight size={17} />}</span>
-                      <div className="record-primary"><h3>{transaction.description || titleCase(transaction.category)}</h3><p>{titleCase(transaction.category)} · {shortDate(transaction.occurred_on)}</p></div>
+                      <div className="record-primary"><h3>{transaction.description || titleCase(transaction.category)}</h3><p>{titleCase(transaction.category)} · {shortDate(transaction.occurred_on)} {transaction.source === "monobank" && <span className="record-badge monobank">Monobank</span>} {transaction.hold && <span className="record-badge pending">Pending</span>} {transaction.excluded_from_summary && <span className="record-badge excluded">Excluded</span>}</p></div>
                       <strong className={`transaction-amount ${transaction.kind}`}>{transaction.kind === "expense" ? "−" : "+"}{money(asNumber(transaction.amount))}</strong>
-                      <div className="record-actions"><button onClick={() => setDialog({ kind: "transaction", record: transaction })} aria-label="Edit transaction"><Edit3 size={16} /></button><button className="danger" onClick={() => void remove(`/finance/transactions/${transaction.id}`, "Transaction")} aria-label="Delete transaction"><Trash2 size={16} /></button></div>
+                      <div className="record-actions"><button onClick={() => setDialog({ kind: "transaction", record: transaction })} aria-label={transaction.source === "monobank" ? "Categorize Monobank transaction" : "Edit transaction"}><Edit3 size={16} /></button>{transaction.source === "manual" && <button className="danger" onClick={() => void remove(`/finance/transactions/${transaction.id}`, "Transaction")} aria-label="Delete transaction"><Trash2 size={16} /></button>}</div>
                     </article>
                   ))}
                 </div>
@@ -285,7 +516,7 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
             <article className="module-stat"><span className="stat-icon lime"><Banknote size={18} /></span><p>Assets</p><strong>{money(asNumber(data.wealth.assets))}</strong><em>Included accounts</em></article>
             <article className="module-stat"><span className="stat-icon amber"><CreditCard size={18} /></span><p>Liabilities</p><strong>{money(asNumber(data.wealth.liabilities))}</strong><em>Included accounts</em></article>
             <article className="module-stat featured"><span className="stat-icon forest"><Landmark size={18} /></span><p>Net worth</p><strong>{money(asNumber(data.wealth.net_worth))}</strong><em>Assets minus liabilities</em></article>
-            <article className="module-stat"><span className="stat-icon blue"><PiggyBank size={18} /></span><p>Savings accounts</p><strong>{money(asNumber(data.wealth.savings))}</strong><em>{data.accounts.filter((item) => item.is_savings).length} accounts marked savings</em></article>
+            <article className="module-stat"><span className="stat-icon blue"><PiggyBank size={18} /></span><p>Savings</p><strong>{money(asNumber(data.wealth.savings))}</strong><em>{data.accounts.filter((item) => item.is_savings).length} local accounts · {data.monobank.jars.filter((item) => item.currency === currency).length} jars</em></article>
           </section>
 
           <div className="module-two-column wealth-grid">
@@ -349,9 +580,26 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
 
       <ModuleDialog open={dialog !== null} title={dialogTitle} eyebrow="Money" saving={saving} onClose={closeDialog}>
         {dialog?.kind === "transaction" && <form className="log-form" onSubmit={saveTransaction} key={dialog.record?.id ?? "new-transaction"}>
-          <div className="form-grid"><label><span>Type</span><select name="kind" defaultValue={dialog.record?.kind ?? "expense"}><option value="expense">Expense</option><option value="income">Income</option></select></label><label><span>Date</span><input name="occurred_on" type="date" min={period.startDate} max={period.endDate} defaultValue={dialog.record?.occurred_on ?? period.referenceDate} required /></label></div>
-          <div className="form-grid"><label><span>Amount</span><div className="input-unit"><input name="amount" type="number" min="0.01" step="0.01" defaultValue={dialog.record ? asNumber(dialog.record.amount) : ""} placeholder="45.00" required /><em>{currency}</em></div></label><label><span>Category</span><input name="category" maxLength={100} defaultValue={dialog.record?.category ?? ""} placeholder="Food" required /></label></div>
-          <label><span>Description</span><input name="description" maxLength={500} defaultValue={dialog.record?.description ?? ""} placeholder="What was this for?" /></label>
+          {dialog.record?.source === "monobank" ? (
+            <>
+              <div className="dialog-note monobank-note"><ShieldCheck size={16} /><span>Bank amount, date, type, currency, and description are read-only. Your category and exclusion choice remain unchanged after future syncs.</span></div>
+              <div className="monobank-readonly-transaction">
+                <div><span>Description</span><strong>{dialog.record.description || "Monobank transaction"}</strong></div>
+                <div><span>Amount</span><strong>{dialog.record.kind === "expense" ? "−" : "+"}{formatMoney(asNumber(dialog.record.amount), dialog.record.currency)}</strong></div>
+                <div><span>Date</span><strong>{shortDate(dialog.record.occurred_on)}</strong></div>
+                <div><span>Status</span><strong>{dialog.record.hold ? "Pending" : "Booked"}</strong></div>
+              </div>
+              <label><span>Category</span><input name="category" maxLength={100} defaultValue={dialog.record.category} placeholder="Food" required /></label>
+              <div className="checkbox-stack"><label><input name="excluded_from_summary" type="checkbox" defaultChecked={dialog.record.excluded_from_summary} /><span><strong>Exclude from summaries</strong><small>Keep the transaction in the ledger without counting it in cash-flow totals.</small></span></label></div>
+            </>
+          ) : (
+            <>
+              <div className="form-grid"><label><span>Type</span><select name="kind" defaultValue={dialog.record?.kind ?? "expense"}><option value="expense">Expense</option><option value="income">Income</option></select></label><label><span>Date</span><input name="occurred_on" type="date" min={period.startDate} max={period.endDate} defaultValue={dialog.record?.occurred_on ?? period.referenceDate} required /></label></div>
+              <div className="form-grid"><label><span>Amount</span><div className="input-unit"><input name="amount" type="number" min="0.01" step="0.01" defaultValue={dialog.record ? asNumber(dialog.record.amount) : ""} placeholder="45.00" required /><em>{currency}</em></div></label><label><span>Category</span><input name="category" maxLength={100} defaultValue={dialog.record?.category ?? ""} placeholder="Food" required /></label></div>
+              <label><span>Description</span><input name="description" maxLength={500} defaultValue={dialog.record?.description ?? ""} placeholder="What was this for?" /></label>
+              <div className="checkbox-stack"><label><input name="excluded_from_summary" type="checkbox" defaultChecked={dialog.record?.excluded_from_summary ?? false} /><span><strong>Exclude from summaries</strong><small>Keep this entry in the ledger without counting it in cash-flow totals.</small></span></label></div>
+            </>
+          )}
           <SaveActions saving={saving} onCancel={closeDialog} label={dialog.record ? "Save changes" : "Add transaction"} />
         </form>}
 
@@ -384,6 +632,14 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
           <label><span>Amount</span><div className="input-unit"><input name="amount" type="number" min="0.01" step="0.01" defaultValue={dialog.record ? asNumber(dialog.record.amount) : ""} placeholder="250" required /><em>{currency}</em></div></label>
           <label><span>Notes</span><input name="notes" maxLength={500} defaultValue={dialog.record?.notes ?? ""} placeholder="Payday transfer" /></label>
           <SaveActions saving={saving} onCancel={closeDialog} label={dialog.record ? "Save changes" : "Add activity"} />
+        </form>}
+
+        {dialog?.kind === "monobank-connect" && <form className="log-form monobank-connect-form" onSubmit={saveMonobankConnection}>
+          <div className="dialog-note monobank-note"><ShieldCheck size={17} /><span>Your personal token is sent directly to the Better Tracker backend over this connection, encrypted with Fernet, and never returned to the browser after connect.</span></div>
+          <label><span>Personal API token</span><input name="monobank_token" type="password" autoComplete="off" spellCheck={false} placeholder="Paste your Monobank token" required /></label>
+          <p className="field-help">Create a personal token in the official Monobank API cabinet. Use Better Tracker over HTTPS outside local development.</p>
+          <div className="connection-scope"><strong>Read-only import</strong><span>Client name, cards, balances, credit limits, jars, and a user-selected statement period (one month by default). No payments, webhooks, or scheduled sync.</span></div>
+          <SaveActions saving={saving} onCancel={closeDialog} label="Connect securely" />
         </form>}
       </ModuleDialog>
       {toast && <ModuleToast {...toast} onClose={() => setToast(null)} />}

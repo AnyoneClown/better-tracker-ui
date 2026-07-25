@@ -17,10 +17,11 @@ export function useModuleData<T>(periodKey: string, loader: Loader<T>) {
     const controller = new AbortController();
     void loader(periodKey, controller.signal)
       .then((nextData) => {
+        if (controller.signal.aborted) return;
         setResult({ data: nextData, error: null, settledKey: requestKey });
       })
       .catch((reason: unknown) => {
-        if (reason instanceof DOMException && reason.name === "AbortError") return;
+        if (controller.signal.aborted || (reason instanceof DOMException && reason.name === "AbortError")) return;
         setResult((current) => ({
           data: current.data,
           error: reason instanceof Error ? reason.message : "The backend request failed.",

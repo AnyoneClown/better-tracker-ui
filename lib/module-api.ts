@@ -43,6 +43,16 @@ export type FinancialTransaction = Entity & {
   occurred_on: string;
   currency: string;
   description: string | null;
+  source: "manual" | "monobank";
+  external_account_id: string | null;
+  external_transaction_id: string | null;
+  occurred_at: string | null;
+  mcc: number | null;
+  hold: boolean;
+  mapped_category: string | null;
+  category_override: string | null;
+  excluded_from_summary: boolean;
+  provider_metadata: Record<string, unknown> | null;
 };
 
 export type MonthlyBudget = Entity & {
@@ -99,6 +109,62 @@ export type WealthSummary = {
   savings: DecimalValue;
   savings_goal_target: DecimalValue;
   savings_goal_current: DecimalValue;
+};
+
+export type MonobankAccount = Entity & {
+  external_id: string;
+  send_id: string | null;
+  card_type: string;
+  balance: DecimalValue;
+  credit_limit: DecimalValue;
+  currency: string;
+  masked_pan: string[];
+  iban: string | null;
+  cashback_type: string | null;
+};
+
+export type MonobankJar = Entity & {
+  external_id: string;
+  send_id: string | null;
+  title: string;
+  description: string | null;
+  balance: DecimalValue;
+  goal: DecimalValue | null;
+  currency: string;
+  progress_percent: DecimalValue | null;
+};
+
+export type MonobankConnection = {
+  connected: boolean;
+  id: string | null;
+  external_client_id: string | null;
+  client_name: string | null;
+  permissions: string | null;
+  client_metadata: Record<string, unknown> | null;
+  sync_status: "idle" | "running" | "succeeded" | "failed" | null;
+  sync_progress_current: number;
+  sync_progress_total: number;
+  sync_error: string | null;
+  sync_date_from: string | null;
+  sync_date_to: string | null;
+  connected_at: string | null;
+  last_sync_started_at: string | null;
+  last_sync_completed_at: string | null;
+  accounts: MonobankAccount[];
+  jars: MonobankJar[];
+};
+
+export type MonobankSyncAccepted = {
+  status: "running";
+  sync_progress_current: number;
+  sync_progress_total: number;
+  date_from: string;
+  date_to: string;
+};
+
+export type MonobankTransactionsDeleteResponse = {
+  account_id: string;
+  deleted_count: number;
 };
 
 export type WorkoutSet = Entity & {
@@ -181,6 +247,8 @@ export type MoneyData = {
   goals: SavingsGoal[];
   contributions: SavingsContribution[];
   snapshots: NetWorthSnapshot[];
+  currencies: string[];
+  monobank: MonobankConnection;
 };
 
 export type TrainingData = {
@@ -223,11 +291,14 @@ function request<T>(path: string, signal?: AbortSignal): Promise<T> {
   return apiRequest<T>(path, { signal });
 }
 
-export async function fetchMoneyData(periodKey: string, signal?: AbortSignal): Promise<MoneyData> {
+export async function fetchMoneyData(
+  periodKey: string,
+  currency: string,
+  signal?: AbortSignal,
+): Promise<MoneyData> {
   const period = getPeriod(periodKey);
-  const currency = "USD";
   const dateQuery = query({ start_date: period.startDate, end_date: period.endDate, limit: 100 });
-  const [finance, transactions, budgets, wealth, accounts, goals, snapshots] = await Promise.all([
+  const [finance, transactions, budgets, wealth, accounts, goals, snapshots, currencies, monobank] = await Promise.all([
     request<FinanceSummary>(`/finance/summary?${query({ year: period.year, month: period.month, currency })}`, signal),
     request<ListResponse<FinancialTransaction>>(`/finance/transactions?${dateQuery}&currency=${currency}`, signal),
     request<ListResponse<MonthlyBudget>>(`/finance/budgets?${query({ year: period.year, month: period.month, currency, limit: 100 })}`, signal),
@@ -235,6 +306,8 @@ export async function fetchMoneyData(periodKey: string, signal?: AbortSignal): P
     request<ListResponse<FinancialAccount>>(`/wealth/accounts?currency=${currency}&limit=100`, signal),
     request<ListResponse<SavingsGoal>>(`/wealth/savings-goals?currency=${currency}&limit=100`, signal),
     request<ListResponse<NetWorthSnapshot>>(`/wealth/net-worth-snapshots?currency=${currency}&limit=100`, signal),
+    request<string[]>("/finance/currencies", signal),
+    request<MonobankConnection>("/integrations/monobank/connection", signal),
   ]);
   const contributionPages = await Promise.all(goals.items.map((goal) => request<ListResponse<SavingsContribution>>(
     `/wealth/savings-goals/${goal.id}/contributions?${dateQuery}`,
@@ -250,7 +323,39 @@ export async function fetchMoneyData(periodKey: string, signal?: AbortSignal): P
     goals: goals.items,
     contributions: contributionPages.flatMap((page) => page.items),
     snapshots: snapshots.items,
+    currencies,
+    monobank,
   };
+}
+
+export async function connectMonobank(token: string): Promise<MonobankConnection> {
+  return apiRequest<MonobankConnection>("/integrations/monobank/connection", {
+    method: "POST",
+    body: JSON.stringify({ token }),
+  });
+}
+
+export async function startMonobankSync(
+  dateFrom: string,
+  dateTo: string,
+): Promise<MonobankSyncAccepted> {
+  return apiRequest<MonobankSyncAccepted>("/integrations/monobank/sync", {
+    method: "POST",
+    body: JSON.stringify({ date_from: dateFrom, date_to: dateTo }),
+  });
+}
+
+export async function deleteMonobankAccountTransactions(
+  accountId: string,
+): Promise<MonobankTransactionsDeleteResponse> {
+  return apiRequest<MonobankTransactionsDeleteResponse>(
+    `/integrations/monobank/accounts/${accountId}/transactions`,
+    { method: "DELETE" },
+  );
+}
+
+export async function disconnectMonobank(): Promise<void> {
+  await apiRequest("/integrations/monobank/connection", { method: "DELETE" });
 }
 
 export async function fetchTrainingData(periodKey: string, signal?: AbortSignal): Promise<TrainingData> {

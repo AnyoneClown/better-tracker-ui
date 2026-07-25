@@ -64,6 +64,28 @@ summaries. A card-level action can delete all of that card's imported
 transactions without disconnecting it; a later sync can import them again.
 Monobank jars are displayed separately from local Savings Goals.
 
+## PrivatBank FOP
+
+Money also supports a separate Privat24 for Business connection for each
+authenticated FOP user. The user pastes an AutoClient API token into a password
+field. The frontend submits it once and never stores either token in browser
+storage; the backend validates and encrypts the PrivatBank token with its own
+Fernet key.
+
+Create the token in Privat24 for Business under **Accounting and reports →
+Integration (AutoClient) → API**. Enable service restrictions and select only
+**Get account balances and transactions**. Better Tracker uses only the
+official read-only settings, balances, and statement endpoints; it cannot
+create payments or modify bank data.
+
+PrivatBank sync is manual, defaults to the latest 31 calendar days, accepts a
+custom inclusive period, and displays per-account progress. Imported FOP
+transactions are read-only except for category and summary exclusion. Users
+can delete all imported transactions for one account without disconnecting it.
+When sync finishes, the same polling flow reloads the complete Money data tree,
+including transactions, summaries, currencies, balances, and net worth.
+Personal Privat24 cards are intentionally unsupported.
+
 Use this Personal API flow only for a private owner/family deployment. A public
 service must use Monobank's Provider API instead. Both the deployed frontend and
 backend must use HTTPS before a personal token is submitted.
@@ -92,7 +114,7 @@ vercel --prod
 The value should be the backend origin, for example
 `https://api.example.com`, without `/api/v1` at the end. Vercel cannot reach a
 backend that only listens on `localhost`. Use an HTTPS origin in production,
-especially when Monobank connections are enabled.
+especially when bank connections are enabled.
 
 ## Current data flow
 
@@ -108,3 +130,6 @@ especially when Monobank connections are enabled.
 - Per-user tracker records provided by the backend's ownership checks
 - Per-user encrypted Monobank connection, manual sync progress, read-only bank
   transactions, UAH-first currency views, cards, credit limits, and jars
+- Per-user encrypted PrivatBank FOP connection, selectable statement periods,
+  account balances, per-account transaction deletion, and automatic Money-tree
+  refresh after sync

@@ -159,8 +159,8 @@ test("ships the secure manual Monobank connection flow", async () => {
   assert.match(money, /type="password"/);
   assert.match(money, /Connect Monobank/);
   assert.match(money, /Sync period/);
-  assert.match(money, /syncDateFrom/);
-  assert.match(money, /syncDateTo/);
+  assert.match(money, /monobankSyncDateFrom/);
+  assert.match(money, /monobankSyncDateTo/);
   assert.match(money, /Delete imported transactions/);
   assert.match(money, /sync_progress_current/);
   assert.match(money, /window\.setInterval\(refresh/);
@@ -173,6 +173,35 @@ test("ships the secure manual Monobank connection flow", async () => {
   assert.match(money, /Separate from local Savings Goals/);
   assert.match(environmentExample, /HTTPS backend URL/);
   assert.match(readme, /never writes it to local or session storage/);
+
+  for (const source of [money, moduleApi]) {
+    assert.doesNotMatch(source, /localStorage|sessionStorage/);
+  }
+});
+
+test("ships the read-only PrivatBank FOP connection flow", async () => {
+  const [money, moduleApi, readme] = await Promise.all([
+    readFile(new URL("../app/(modules)/money/money-page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/module-api.ts", import.meta.url), "utf8"),
+    readFile(new URL("../README.md", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(moduleApi, /\/integrations\/privatbank\/connection/);
+  assert.match(moduleApi, /\/integrations\/privatbank\/sync/);
+  assert.match(moduleApi, /\/integrations\/privatbank\/accounts\/\$\{accountId\}\/transactions/);
+  assert.match(moduleApi, /source: "manual" \| "monobank" \| "privatbank"/);
+  assert.match(money, /Connect PrivatBank FOP/);
+  assert.match(money, /Privat24 Business API token/);
+  assert.match(money, /privatBankSyncDateFrom/);
+  assert.match(money, /privatBankSyncDateTo/);
+  assert.match(money, /PrivatBank sync complete\. Money data refreshed\./);
+  assert.match(money, /privatBankSyncAwaitingRefresh/);
+  assert.match(money, /privatBankSyncBaseline/);
+  assert.match(money, /last_sync_started_at/);
+  assert.match(money, />PrivatBank FOP</);
+  assert.match(money, /Get account balances and transactions/);
+  assert.match(readme, /PrivatBank FOP/);
+  assert.match(readme, /never stores either token in browser\s+storage/);
 
   for (const source of [money, moduleApi]) {
     assert.doesNotMatch(source, /localStorage|sessionStorage/);

@@ -2651,6 +2651,19 @@ textarea:focus-visible {
     linear-gradient(135deg, #f9fbf8, #f1f5ef);
 }
 
+.privatbank-panel {
+  border-color: #cfe1d5;
+  background:
+    radial-gradient(circle at 92% 0%, rgb(50 166 93 / 0.13), transparent 30%),
+    #f9fcfa;
+}
+
+.privatbank-panel.disconnected {
+  background:
+    radial-gradient(circle at 94% 12%, rgb(50 166 93 / 0.11), transparent 32%),
+    linear-gradient(135deg, #f8fcf9, #edf6f0);
+}
+
 .monobank-heading {
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr) auto;
@@ -2668,6 +2681,16 @@ textarea:focus-visible {
   color: #fff;
   background: #171b19;
   box-shadow: 0 8px 18px rgb(23 27 25 / 0.13);
+}
+
+.privatbank-mark,
+.privatbank-connect-button,
+.privatbank-account-icon {
+  background: #16783d;
+}
+
+.privatbank-mark {
+  box-shadow: 0 8px 18px rgb(22 120 61 / 0.18);
 }
 
 .monobank-heading > div {
@@ -3078,6 +3101,11 @@ textarea:focus-visible {
 .record-badge.monobank {
   color: #fff;
   background: #252b28;
+}
+
+.record-badge.privatbank {
+  color: #fff;
+  background: #16783d;
 }
 
 .record-badge.pending {

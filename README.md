@@ -1,20 +1,26 @@
 # Better Tracker frontend
 
-Better Tracker is a frontend-only personal tracking MVP for money, training,
-nutrition, body weight, savings, and net worth. It uses realistic demo data and
-stores quick-log changes in the browser so the experience can be tested before
-an API is connected.
+Better Tracker is a Next.js dashboard for money, training, nutrition, body
+weight, savings, and net worth. The dashboard reads and writes live data through
+the Better Tracker FastAPI service.
 
 ## Local development
 
-Requires Node.js 24.
+Requires Node.js 24 and a running Better Tracker backend.
 
 ```bash
 npm install
+cp .env.example .env.local
 npm run dev
 ```
 
-Then open `http://localhost:3000`.
+`BETTER_TRACKER_API_URL` defaults to `http://127.0.0.1:8000` during local
+development. Set it in `.env.local` when the API uses another address, then open
+`http://localhost:3000`.
+
+The browser calls the same-origin `/api/backend/*` route. Next.js forwards those
+requests to FastAPI on the server, so the API URL is not included in the browser
+bundle and the production frontend does not require a CORS exception.
 
 ## Validate
 
@@ -26,25 +32,30 @@ npm test
 
 ## Deploy to Vercel
 
-This is a standard Next.js App Router project and needs no custom Vercel build
-configuration. The production project is `better-tracker` and is available at
-https://better-tracker-sigma.vercel.app. Link the folder once, then deploy:
+This is a standard Next.js App Router project. The production project is
+`better-tracker` and is available at https://better-tracker-sigma.vercel.app.
+Configure a publicly reachable backend URL for Production, Preview, and
+Development before deploying:
 
 ```bash
 vercel link
+vercel env add BETTER_TRACKER_API_URL production preview development
 vercel --prod
 ```
 
-The app currently requires no environment variables.
+The value should be the backend origin, for example
+`https://api.example.com`, without `/api/v1` at the end. Vercel cannot reach a
+backend that only listens on `localhost`.
 
-## Current scope
+## Current data flow
 
 - Responsive overview dashboard
-- Monthly demo views for May, June, and July 2026
+- Current month plus the previous two monthly views
+- Live finance, workout, nutrition, weight, wealth, goal, snapshot, and activity data
 - Quick logging for expenses, income, workouts, meals, weight, and savings
-- Immediate metric and activity updates with undo
-- Device-local persistence via `localStorage`
-- No API calls, authentication, or database integration
+- Backend-aware undo for newly created and updated records
+- Same-day nutrition aggregation and weight-entry updates that match the API model
+- Loading, empty, refresh, and backend error states
 
-The state model is intentionally small so a future FastAPI client can replace
-the local demo adapter without changing the visual system.
+The API is currently single-user and does not expose authentication. Add an auth
+layer before making private tracker data available on a public backend URL.

@@ -27,102 +27,35 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import {
+  type CSSProperties,
+  type FormEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
-type LogType = "Expense" | "Income" | "Workout" | "Meal" | "Weight" | "Savings";
-
-type Activity = {
-  id: number;
-  kind: LogType;
-  title: string;
-  detail: string;
-  value: string;
-  tone: "green" | "orange" | "blue" | "purple" | "neutral";
-};
-
-type TrackerState = {
-  spent: number;
-  income: number;
-  calories: number;
-  protein: number;
-  weight: number;
-  workouts: number;
-  saved: number;
-  netWorth: number;
-  categoryAdjustments: Record<string, number>;
-  activities: Activity[];
-};
-
-const initialActivities: Activity[] = [
-  { id: 1, kind: "Expense", title: "Grocery run", detail: "Food · 16:42", value: "−$84.30", tone: "orange" },
-  { id: 2, kind: "Weight", title: "Morning weigh-in", detail: "Body · 08:10", value: "78.4 kg", tone: "blue" },
-  { id: 3, kind: "Meal", title: "Chicken grain bowl", detail: "Lunch · 13:05", value: "620 kcal", tone: "green" },
-  { id: 4, kind: "Workout", title: "Upper body", detail: "58 min · Yesterday", value: "6 exercises", tone: "purple" },
-  { id: 5, kind: "Savings", title: "Emergency fund", detail: "Transfer · Yesterday", value: "+$250", tone: "green" },
-];
-
-const initialState: TrackerState = {
-  spent: 2146,
-  income: 5400,
-  calories: 1640,
-  protein: 118,
-  weight: 78.4,
-  workouts: 3,
-  saved: 10550,
-  netWorth: 34820,
-  categoryAdjustments: {},
-  activities: initialActivities,
-};
-
-const storageKeys = {
-  tracker: "better-tracker-demo",
-  month: "better-tracker-month",
-  legacyTracker: "northstar-demo",
-  legacyMonth: "northstar-month",
-} as const;
-
-const monthPresets: Record<string, TrackerState> = {
-  "July 2026": initialState,
-  "June 2026": {
-    spent: 2860,
-    income: 5150,
-    calories: 2110,
-    protein: 146,
-    weight: 78.8,
-    workouts: 4,
-    saved: 9730,
-    netWorth: 33580,
-    categoryAdjustments: {},
-    activities: [
-      { id: 61, kind: "Savings", title: "Emergency fund", detail: "Transfer · 30 Jun", value: "+$300", tone: "green" },
-      { id: 62, kind: "Workout", title: "Full body", detail: "62 min · 29 Jun", value: "7 exercises", tone: "purple" },
-      { id: 63, kind: "Expense", title: "Dinner with friends", detail: "Lifestyle · 28 Jun", value: "−$72.40", tone: "orange" },
-    ],
-  },
-  "May 2026": {
-    spent: 3040,
-    income: 4920,
-    calories: 1985,
-    protein: 132,
-    weight: 79.3,
-    workouts: 3,
-    saved: 9080,
-    netWorth: 32690,
-    categoryAdjustments: {},
-    activities: [
-      { id: 51, kind: "Income", title: "Freelance project", detail: "Income · 31 May", value: "+$680", tone: "green" },
-      { id: 52, kind: "Weight", title: "Morning weigh-in", detail: "Body · 30 May", value: "79.3 kg", tone: "blue" },
-      { id: 53, kind: "Workout", title: "Upper body", detail: "54 min · 29 May", value: "6 exercises", tone: "purple" },
-    ],
-  },
-};
+import {
+  createQuickLog,
+  type Activity,
+  type DashboardData,
+  fetchDashboard,
+  formatMoney,
+  getPeriod,
+  getPeriodOptions,
+  type LogType,
+  type UndoAction,
+  undoQuickLog,
+} from "@/lib/tracker-api";
 
 const navigation = [
-  { label: "Overview", icon: LayoutDashboard, target: "overview" },
-  { label: "Money", icon: WalletCards, target: "money" },
-  { label: "Training", icon: Dumbbell, target: "training" },
-  { label: "Nutrition", icon: Utensils, target: "nutrition" },
-  { label: "Body", icon: Scale, target: "body" },
+  { label: "Overview", icon: LayoutDashboard, href: "/" },
+  { label: "Money", icon: WalletCards, href: "/money" },
+  { label: "Training", icon: Dumbbell, href: "/training" },
+  { label: "Nutrition", icon: Utensils, href: "/nutrition" },
+  { label: "Body", icon: Scale, href: "/body" },
 ];
 
 const logTypes: { label: LogType; icon: typeof ReceiptText }[] = [
@@ -134,37 +67,88 @@ const logTypes: { label: LogType; icon: typeof ReceiptText }[] = [
   { label: "Savings", icon: PiggyBank },
 ];
 
-const money = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  maximumFractionDigits: 2,
-});
+type ToastState = {
+  message: string;
+  tone: "success" | "error" | "info";
+  undo?: UndoAction;
+};
 
-function restoreTrackerState(raw: string): TrackerState | null {
-  try {
-    const value = JSON.parse(raw) as Partial<TrackerState>;
-    const numericKeys: (keyof Pick<TrackerState, "spent" | "income" | "calories" | "protein" | "weight" | "workouts" | "saved" | "netWorth">)[] = [
-      "spent", "income", "calories", "protein", "weight", "workouts", "saved", "netWorth",
-    ];
-    if (!numericKeys.every((key) => Number.isFinite(value[key])) || !Array.isArray(value.activities)) return null;
-    return {
-      ...initialState,
-      ...value,
-      categoryAdjustments: value.categoryAdjustments && typeof value.categoryAdjustments === "object" ? value.categoryAdjustments : {},
-      activities: value.activities,
-    } as TrackerState;
-  } catch {
-    return null;
-  }
-}
-
-function formatCompact(value: number) {
+function formatCompact(value: number, currency: string) {
   return new Intl.NumberFormat("en-US", {
     notation: "compact",
     style: "currency",
-    currency: "USD",
+    currency,
     maximumFractionDigits: 1,
   }).format(value);
+}
+
+function formatLongDate(date: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    timeZone: "UTC",
+  }).format(new Date(`${date}T12:00:00Z`));
+}
+
+function formatShortDate(date: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  }).format(new Date(`${date}T12:00:00Z`));
+}
+
+function formatDuration(minutes: number): string {
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder > 0 ? `${hours}h ${remainder}m` : `${hours}h`;
+}
+
+function getWeekDays(referenceDate: string) {
+  const reference = new Date(`${referenceDate}T12:00:00Z`);
+  const mondayOffset = (reference.getUTCDay() + 6) % 7;
+  const monday = new Date(reference);
+  monday.setUTCDate(reference.getUTCDate() - mondayOffset);
+
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(monday);
+    date.setUTCDate(monday.getUTCDate() + index);
+    return {
+      key: date.toISOString().slice(0, 10),
+      day: ["S", "M", "T", "W", "T", "F", "S"][date.getUTCDay()],
+      date: String(date.getUTCDate()),
+    };
+  });
+}
+
+function buildWeightChart(weights: DashboardData["health"]["weights"]) {
+  if (weights.length === 0) return null;
+  const values = weights.map((item) => item.value);
+  const minimum = Math.min(...values);
+  const maximum = Math.max(...values);
+  const range = Math.max(maximum - minimum, 1);
+  const points = weights.length === 1
+    ? [
+      { x: 0, y: 45 },
+      { x: 360, y: 45 },
+    ]
+    : weights.map((item, index) => ({
+      x: (index / (weights.length - 1)) * 360,
+      y: 12 + ((maximum - item.value) / range) * 58,
+    }));
+  const line = points
+    .map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(1)},${point.y.toFixed(1)}`)
+    .join(" ");
+  const last = points.at(-1) ?? { x: 360, y: 45 };
+  return {
+    line,
+    area: `${line} L360,90 L0,90 Z`,
+    last,
+    minimum,
+    maximum,
+  };
 }
 
 function IconBadge({ kind, tone }: { kind: LogType; tone: Activity["tone"] }) {
@@ -189,62 +173,82 @@ function BrandMark() {
   );
 }
 
+function DashboardState({
+  error,
+  onRetry,
+}: {
+  error: string | null;
+  onRetry: () => void;
+}) {
+  return (
+    <section className={`dashboard-state ${error ? "error" : "loading"}`} role={error ? "alert" : "status"}>
+      <span className="state-icon">
+        {error ? <X size={20} /> : <RotateCcw size={20} />}
+      </span>
+      <div>
+        <h2>{error ? "The backend could not be loaded" : "Loading your live data"}</h2>
+        <p>{error ?? "Fetching money, training, health, and wealth records…"}</p>
+      </div>
+      {error && <button onClick={onRetry}>Try again</button>}
+    </section>
+  );
+}
+
 export default function Home() {
-  const [tracker, setTracker] = useState<TrackerState>(initialState);
-  const [activeNav, setActiveNav] = useState("Overview");
-  const [month, setMonth] = useState("July 2026");
+  const periodOptions = useMemo(() => getPeriodOptions(), []);
+  const [periodKey, setPeriodKey] = useState(() => getPeriodOptions()[0].key);
+  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [logType, setLogType] = useState<LogType>("Expense");
   const [defaultCategory, setDefaultCategory] = useState("Food");
-  const [toast, setToast] = useState<string | null>(null);
-  const [canUndo, setCanUndo] = useState(false);
-  const [hydrated, setHydrated] = useState(false);
-  const undoSnapshot = useRef<TrackerState | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [undoing, setUndoing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [refreshVersion, setRefreshVersion] = useState(0);
   const dialogRef = useRef<HTMLElement | null>(null);
   const lastFocusedRef = useRef<HTMLElement | null>(null);
 
-  useEffect(() => {
-    const saved = window.localStorage.getItem(storageKeys.tracker) ?? window.localStorage.getItem(storageKeys.legacyTracker);
-    const savedMonth = window.localStorage.getItem(storageKeys.month) ?? window.localStorage.getItem(storageKeys.legacyMonth);
-    if (saved) {
-      const restored = restoreTrackerState(saved);
-      if (restored) {
-        window.localStorage.removeItem(storageKeys.legacyTracker);
-        window.localStorage.removeItem(storageKeys.legacyMonth);
-        const timer = window.setTimeout(() => {
-          setTracker(restored);
-          if (savedMonth && monthPresets[savedMonth]) setMonth(savedMonth);
-          setHydrated(true);
-        }, 0);
-        return () => window.clearTimeout(timer);
-      } else {
-        window.localStorage.removeItem(storageKeys.tracker);
-        window.localStorage.removeItem(storageKeys.legacyTracker);
-      }
-    }
-    const timer = window.setTimeout(() => setHydrated(true), 0);
-    return () => window.clearTimeout(timer);
-  }, []);
+  const selectedPeriod = dashboard?.period ?? getPeriod(periodKey);
+  const currency = dashboard?.currency ?? "USD";
+  const money = (value: number) => formatMoney(value, currency);
 
   useEffect(() => {
-    if (hydrated) {
-      window.localStorage.setItem(storageKeys.tracker, JSON.stringify(tracker));
-      window.localStorage.setItem(storageKeys.month, month);
-    }
-  }, [tracker, month, hydrated]);
+    const controller = new AbortController();
+    void fetchDashboard(periodKey, controller.signal)
+      .then((data) => {
+        setDashboard(data);
+        setLoadError(null);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setLoadError(error instanceof Error ? error.message : "The backend request failed.");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [periodKey, refreshVersion]);
 
   useEffect(() => {
     if (!dialogOpen) return;
-    const background = Array.from(document.querySelectorAll<HTMLElement>(".sidebar, .mobile-header, .main-content, .mobile-nav"));
+    const background = Array.from(
+      document.querySelectorAll<HTMLElement>(".sidebar, .mobile-header, .main-content, .mobile-nav"),
+    );
     background.forEach((element) => { element.inert = true; });
-    const focusTimer = window.setTimeout(() => dialogRef.current?.querySelector<HTMLInputElement>("input")?.focus(), 0);
+    const focusTimer = window.setTimeout(() => {
+      dialogRef.current?.querySelector<HTMLElement>("input, select")?.focus();
+    }, 0);
     const handleDialogKeys = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && !saving) {
         setDialogOpen(false);
         return;
       }
       if (event.key !== "Tab" || !dialogRef.current) return;
-      const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])"));
+      const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(
+        "button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])",
+      ));
       const first = focusable[0];
       const last = focusable.at(-1);
       if (event.shiftKey && document.activeElement === first) {
@@ -262,400 +266,546 @@ export default function Home() {
       background.forEach((element) => { element.inert = false; });
       lastFocusedRef.current?.focus();
     };
-  }, [dialogOpen]);
+  }, [dialogOpen, saving]);
 
   useEffect(() => {
     if (!toast) return;
-    const timer = window.setTimeout(() => setToast(null), 5000);
+    const timer = window.setTimeout(() => setToast(null), 6000);
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  const remainingBudget = 3200 - tracker.spent;
-  const spendingPercent = Math.min(Math.round((tracker.spent / 3200) * 100), 100);
-  const caloriesLeft = Math.max(2250 - tracker.calories, 0);
-  const savingsRate = Math.max(Math.round(((tracker.income - tracker.spent) / tracker.income) * 100), 0);
-  const liabilities = 7780;
-  const assets = tracker.netWorth + liabilities;
-  const emergencyFund = Math.max(0, 8450 + tracker.saved - 10550);
-  const emergencyProgress = Math.min(Math.round((emergencyFund / 12000) * 100), 100);
-  const remainingWorkouts = Math.max(4 - tracker.workouts, 0);
-  const addedToday = Object.values(tracker.categoryAdjustments).reduce((total, value) => total + value, 0);
-  const currentSpend = month === "July 2026" ? 84.3 + addedToday : tracker.spent / 30;
+  const refreshData = () => {
+    setLoading(true);
+    setLoadError(null);
+    setRefreshVersion((value) => value + 1);
+  };
 
-  const categoryBases = useMemo(() => {
-    if (month === "June 2026") return { Housing: 1400, Food: 620, Transport: 320, Lifestyle: 520 };
-    if (month === "May 2026") return { Housing: 1400, Food: 690, Transport: 310, Lifestyle: 640 };
-    return { Housing: 1200, Food: 486, Transport: 220, Lifestyle: 240 };
-  }, [month]);
-
-  const budgetCategories = useMemo(
-    () => [
-      { name: "Housing", used: categoryBases.Housing + (tracker.categoryAdjustments.Housing ?? 0), limit: 1400, color: "forest" },
-      { name: "Food", used: categoryBases.Food + (tracker.categoryAdjustments.Food ?? 0), limit: 600, color: "lime" },
-      { name: "Transport", used: categoryBases.Transport + (tracker.categoryAdjustments.Transport ?? 0), limit: 350, color: "amber" },
-      { name: "Lifestyle", used: categoryBases.Lifestyle + (tracker.categoryAdjustments.Lifestyle ?? 0), limit: 300, color: "slate" },
-    ],
-    [categoryBases, tracker.categoryAdjustments],
-  );
+  const changePeriod = (nextPeriod: string) => {
+    setPeriodKey(nextPeriod);
+    setDashboard(null);
+    setLoading(true);
+    setLoadError(null);
+    setToast({ message: `Loading ${getPeriod(nextPeriod).label}`, tone: "info" });
+  };
 
   const openLog = (type: LogType = "Expense", category = "Food") => {
-    lastFocusedRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    lastFocusedRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
     setLogType(type);
     setDefaultCategory(category);
     setDialogOpen(true);
   };
 
-  const changeMonth = (nextMonth: string) => {
-    setMonth(nextMonth);
-    setTracker(monthPresets[nextMonth] ?? initialState);
-    setCanUndo(false);
-    undoSnapshot.current = null;
-    setToast(`Showing ${nextMonth}`);
-  };
-
-  const navigateTo = (label: string, target: string) => {
-    setActiveNav(label);
-    document.getElementById(target)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-
   const showNotice = (message: string) => {
-    setCanUndo(false);
-    setToast(message);
+    setToast({ message, tone: "info" });
   };
 
-  const handleLog = (event: FormEvent<HTMLFormElement>) => {
+  const handleLog = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const numericValue = Number(form.get("value") ?? 0);
-    const description = String(form.get("description") || "New entry");
-    const category = String(form.get("category") || "General");
-    const entryDate = String(form.get("date") || "2026-07-24");
-    const when = entryDate === "2026-07-24"
-      ? "Just now"
-      : new Intl.DateTimeFormat("en-US", { day: "numeric", month: "short" }).format(new Date(`${entryDate}T12:00:00`));
-    undoSnapshot.current = tracker;
-    setCanUndo(true);
+    const optionalNumber = (name: string) => {
+      const raw = String(form.get(name) ?? "").trim();
+      return raw === "" ? undefined : Number(raw);
+    };
+    const description = String(form.get("description") ?? "").trim();
+    const value = optionalNumber("value") ?? 0;
 
-    setTracker((current) => {
-      const next = { ...current };
-      let activity: Activity;
-
-      if (logType === "Expense") {
-        next.spent += numericValue;
-        next.netWorth -= numericValue;
-        next.categoryAdjustments = { ...current.categoryAdjustments, [category]: (current.categoryAdjustments[category] ?? 0) + numericValue };
-        activity = { id: Date.now(), kind: logType, title: description, detail: `${category} · ${when}`, value: `−${money.format(numericValue)}`, tone: "orange" };
-      } else if (logType === "Income") {
-        next.income += numericValue;
-        next.netWorth += numericValue;
-        activity = { id: Date.now(), kind: logType, title: description, detail: `Income · ${when}`, value: `+${money.format(numericValue)}`, tone: "green" };
-      } else if (logType === "Meal") {
-        const protein = Number(form.get("protein") ?? 0);
-        next.calories += numericValue;
-        next.protein += protein;
-        activity = { id: Date.now(), kind: logType, title: description, detail: `Meal · ${when}`, value: `${numericValue} kcal`, tone: "green" };
-      } else if (logType === "Weight") {
-        next.weight = numericValue;
-        activity = { id: Date.now(), kind: logType, title: "Weight check-in", detail: `Body · ${when}`, value: `${numericValue.toFixed(1)} kg`, tone: "blue" };
-      } else if (logType === "Workout") {
-        const duration = Number(form.get("duration") ?? 45);
-        next.workouts += 1;
-        activity = { id: Date.now(), kind: logType, title: description, detail: `${duration} min · ${when}`, value: "Completed", tone: "purple" };
-      } else {
-        next.saved += numericValue;
-        activity = { id: Date.now(), kind: logType, title: description, detail: `Savings · ${when}`, value: `+${money.format(numericValue)}`, tone: "green" };
-      }
-
-      next.activities = [activity, ...current.activities].slice(0, 7);
-      return next;
-    });
-
-    setDialogOpen(false);
-    setToast(`${logType} added to your day`);
-  };
-
-  const undoLastLog = () => {
-    if (undoSnapshot.current) {
-      setTracker(undoSnapshot.current);
-      undoSnapshot.current = null;
-      setCanUndo(false);
-      setToast("Last entry undone");
+    setSaving(true);
+    try {
+      const undo = await createQuickLog({
+        type: logType,
+        description,
+        date: String(form.get("date") || selectedPeriod.referenceDate),
+        value,
+        duration: optionalNumber("duration"),
+        protein: optionalNumber("protein"),
+        calorieTarget: optionalNumber("calorieTarget"),
+        category: String(form.get("category") || "General"),
+        goalId: String(form.get("goalId") || "") || undefined,
+        newGoalName: String(form.get("newGoalName") || "").trim() || undefined,
+        newGoalTarget: optionalNumber("newGoalTarget"),
+        currency,
+      });
+      setDialogOpen(false);
+      setToast({ message: `${logType} saved to the backend`, tone: "success", undo });
+      setLoading(true);
+      setRefreshVersion((current) => current + 1);
+    } catch (error) {
+      setToast({
+        message: error instanceof Error ? error.message : `Could not save ${logType.toLowerCase()}.`,
+        tone: "error",
+      });
+    } finally {
+      setSaving(false);
     }
   };
 
-  const resetDemo = () => {
-    undoSnapshot.current = tracker;
-    setCanUndo(true);
-    setMonth("July 2026");
-    setTracker(initialState);
-    setToast("Demo data reset");
+  const undoLastLog = async () => {
+    if (!toast?.undo || undoing) return;
+    setUndoing(true);
+    try {
+      await undoQuickLog(toast.undo);
+      setToast({ message: "The backend entry was undone", tone: "success" });
+      setLoading(true);
+      setRefreshVersion((current) => current + 1);
+    } catch (error) {
+      setToast({
+        message: error instanceof Error ? error.message : "Could not undo the backend entry.",
+        tone: "error",
+      });
+    } finally {
+      setUndoing(false);
+    }
   };
+
+  const focusBudget = dashboard?.finance.totalBudget ?? 0;
+  const focusSpent = dashboard?.finance.spent ?? 0;
+  const focusPercent = focusBudget > 0
+    ? Math.min(Math.round((focusSpent / focusBudget) * 100), 100)
+    : 0;
+  const categoryOptions = Array.from(new Set([
+    defaultCategory,
+    ...(dashboard?.finance.categories.map((category) => category.name) ?? []),
+    "Housing",
+    "Food",
+    "Transport",
+    "Lifestyle",
+    "Other",
+  ]));
+
+  const weekDays = getWeekDays(selectedPeriod.referenceDate);
+  const completedWorkoutDates = new Set(dashboard?.training.workoutDates ?? []);
+  const remainingWorkouts = Math.max(4 - (dashboard?.training.weekCount ?? 0), 0);
+  const weightChart = buildWeightChart(dashboard?.health.weights ?? []);
+  const calorieTarget = dashboard?.health.calorieTarget ?? null;
+  const calories = dashboard?.health.calories ?? 0;
+  const caloriesLeft = calorieTarget === null ? null : Math.max(calorieTarget - calories, 0);
+  const protein = dashboard?.health.protein ?? 0;
+  const proteinShare = calories > 0 ? Math.min(Math.round(((protein * 4) / calories) * 100), 100) : 0;
+  const totalGoalCurrent = dashboard?.goals.reduce((total, goal) => total + goal.current, 0) ?? 0;
+  const totalGoalTarget = dashboard?.goals.reduce((total, goal) => total + goal.target, 0) ?? 0;
+  const savingsGoals = dashboard?.goals ?? [];
+
+  const worthValues = dashboard?.wealth.points.map((point) => point.value) ?? [];
+  const worthMinimum = worthValues.length > 0 ? Math.min(...worthValues) : 0;
+  const worthMaximum = worthValues.length > 0 ? Math.max(...worthValues) : 0;
+  const worthRange = Math.max(worthMaximum - worthMinimum, 1);
+  const worthBarHeights = worthValues.map((value) => (
+    worthValues.length === 1 ? 88 : 28 + ((value - worthMinimum) / worthRange) * 104
+  ));
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <button className="brand" onClick={() => navigateTo("Overview", "overview")} aria-label="Better Tracker home">
+        <Link className="brand" href="/" aria-label="Better Tracker home">
           <span className="brand-mark"><BrandMark /></span>
           <span className="brand-wordmark">BETTER TRACKER</span>
-        </button>
+        </Link>
 
         <nav className="sidebar-nav" aria-label="Primary navigation">
           <p className="nav-eyebrow">Workspace</p>
-          {navigation.map(({ label, icon: Icon, target }) => (
-            <button
-              className={activeNav === label ? "nav-item active" : "nav-item"}
+          {navigation.map(({ label, icon: Icon, href }) => (
+            <Link
+              className={label === "Overview" ? "nav-item active" : "nav-item"}
               key={label}
-              onClick={() => navigateTo(label, target)}
+              href={href}
               aria-label={label}
+              aria-current={label === "Overview" ? "page" : undefined}
             >
               <Icon size={19} strokeWidth={1.9} />
               <span>{label}</span>
               {label === "Overview" && <span className="nav-dot" />}
-            </button>
+            </Link>
           ))}
         </nav>
 
         <div className="sidebar-focus">
           <div className="focus-heading">
-            <span><Target size={16} /> July focus</span>
-            <span className="focus-percent">74%</span>
+            <span><Target size={16} /> {selectedPeriod.label.split(" ")[0]} budget</span>
+            <span className="focus-percent">{focusBudget > 0 ? `${focusPercent}%` : "—"}</span>
           </div>
-          <p>Build a calmer money routine.</p>
-          <div className="focus-bar"><span /></div>
-          <div className="focus-meta"><span>$815 saved</span><span>$1,100</span></div>
+          <p>{focusBudget > 0 ? "Keep monthly spending inside your plan." : "Add category budgets to see your monthly plan."}</p>
+          <div className="focus-bar"><span style={{ width: `${focusPercent}%` }} /></div>
+          <div className="focus-meta">
+            <span>{money(focusSpent)} spent</span>
+            <span>{focusBudget > 0 ? money(focusBudget) : "No budget"}</span>
+          </div>
         </div>
 
-        <button className="profile-row" onClick={resetDemo} title="Reset demo data" aria-label="Reset demo data">
-          <span className="avatar">AM</span>
-          <span className="profile-copy"><strong>Alex Morgan</strong><small>Personal space</small></span>
-          <RotateCcw size={16} />
+        <button className="profile-row" onClick={refreshData} title="Refresh backend data" aria-label="Refresh backend data">
+          <span className="avatar">BT</span>
+          <span className="profile-copy"><strong>Personal tracker</strong><small>Live backend</small></span>
+          <RotateCcw size={16} className={loading ? "spin" : ""} />
         </button>
       </aside>
 
       <header className="mobile-header">
-        <button className="brand" onClick={() => navigateTo("Overview", "overview")} aria-label="Better Tracker home">
+        <Link className="brand" href="/" aria-label="Better Tracker home">
           <span className="brand-mark"><BrandMark /></span>
           <span className="brand-wordmark">BETTER TRACKER</span>
+        </Link>
+        <button className="icon-button" aria-label="Notifications" onClick={() => showNotice("No notification service is connected")}>
+          <Bell size={19} />
         </button>
-        <button className="icon-button" aria-label="Notifications" onClick={() => showNotice("You’re all caught up")}><Bell size={19} /><span className="notification-dot" /></button>
       </header>
 
-      <main className="main-content" id="overview">
+      <main className="main-content" id="overview" aria-busy={loading}>
         <header className="dashboard-header">
           <div>
-            <div className="date-line"><CalendarDays size={15} /> {month === "July 2026" ? "Friday, 24 July" : `${month} review`}</div>
+            <div className="date-line">
+              <CalendarDays size={15} />
+              {selectedPeriod.isCurrent ? formatLongDate(selectedPeriod.referenceDate) : `${selectedPeriod.label} review`}
+            </div>
             <h1>Your life, in one view.</h1>
-            <p>You’re moving in the right direction across <strong>4 of 5 areas</strong> this month.</p>
+            <p>{dashboard
+              ? `Live backend data across ${dashboard.coverage.tracked.length} of 5 tracking areas.`
+              : "Connecting to your Better Tracker backend."}</p>
           </div>
           <div className="header-actions">
             <label className="month-picker">
               <span className="sr-only">Select month</span>
-              <select value={month} onChange={(event) => changeMonth(event.target.value)}>
-                <option>July 2026</option>
-                <option>June 2026</option>
-                <option>May 2026</option>
+              <select value={periodKey} onChange={(event) => changePeriod(event.target.value)}>
+                {periodOptions.map((period) => <option value={period.key} key={period.key}>{period.label}</option>)}
               </select>
               <ChevronDown size={15} aria-hidden="true" />
             </label>
-            <button className="icon-button desktop-only" aria-label="Notifications" onClick={() => showNotice("You’re all caught up")}><Bell size={19} /><span className="notification-dot" /></button>
+            <button className="icon-button desktop-only" aria-label="Notifications" onClick={() => showNotice("No notification service is connected")}>
+              <Bell size={19} />
+            </button>
             <button className="quick-log-button" onClick={() => openLog()}><Plus size={18} /> Quick log</button>
           </div>
         </header>
 
-        <section className="today-strip" aria-label="Today at a glance">
-          <article className="today-item">
-            <span className="today-icon calories"><Flame size={18} /></span>
-            <span><small>Calories left</small><strong>{caloriesLeft.toLocaleString()} kcal</strong></span>
-            <span className="tiny-progress"><span style={{ width: `${Math.min((tracker.calories / 2250) * 100, 100)}%` }} /></span>
-          </article>
-          <article className="today-item">
-            <span className="today-icon workout"><Dumbbell size={18} /></span>
-            <span><small>Next workout</small><strong>Lower body · 18:30</strong></span>
-            <button className="mini-action" onClick={() => openLog("Workout")} aria-label="Log workout"><ArrowRight size={17} /></button>
-          </article>
-          <article className="today-item">
-            <span className="today-icon spending"><ReceiptText size={18} /></span>
-            <span><small>{month === "July 2026" ? "Spent today" : "Daily average"}</small><strong>{money.format(currentSpend)} <em>{month === "July 2026" ? "of $105" : "per day"}</em></strong></span>
-            <button className="mini-action" onClick={() => openLog("Expense")} aria-label="Log expense"><Plus size={17} /></button>
-          </article>
-        </section>
+        {loadError && dashboard && (
+          <div className="data-banner error" role="alert">
+            <span>{loadError}</span><button onClick={refreshData}>Retry</button>
+          </div>
+        )}
+        {loading && dashboard && (
+          <div className="data-banner loading" role="status"><RotateCcw size={14} className="spin" /> Refreshing backend data…</div>
+        )}
 
-        <section className="dashboard-grid" aria-label={`${month} overview`}>
-          <article className="card net-worth-card" id="money">
-            <div className="card-heading">
-              <div><p className="eyebrow">Net worth</p><h2>{money.format(tracker.netWorth)}</h2></div>
-              <button className="quiet-button" onClick={() => setActiveNav("Money")}>View details <ArrowUpRight size={15} /></button>
-            </div>
-            <div className="positive-change"><TrendingUp size={15} /> $1,240 <span>+3.7% this month</span></div>
+        {!dashboard ? (
+          <DashboardState error={loadError} onRetry={refreshData} />
+        ) : (
+          <>
+            <section className="today-strip" aria-label="Reference day at a glance">
+              <article className="today-item">
+                <span className="today-icon calories"><Flame size={18} /></span>
+                <span>
+                  <small>{caloriesLeft === null ? "Calories logged" : "Calories left"}</small>
+                  <strong>{caloriesLeft === null ? calories.toLocaleString() : caloriesLeft.toLocaleString()} kcal</strong>
+                </span>
+                <span className="tiny-progress"><span style={{ width: `${calorieTarget ? Math.min((calories / calorieTarget) * 100, 100) : calories > 0 ? 100 : 0}%` }} /></span>
+              </article>
+              <article className="today-item">
+                <span className="today-icon workout"><Dumbbell size={18} /></span>
+                <span><small>Workouts this week</small><strong>{dashboard.training.weekCount} logged</strong></span>
+                <button className="mini-action" onClick={() => openLog("Workout")} aria-label="Log workout"><Plus size={17} /></button>
+              </article>
+              <article className="today-item">
+                <span className="today-icon spending"><ReceiptText size={18} /></span>
+                <span>
+                  <small>{selectedPeriod.isCurrent ? "Spent today" : "Daily average"}</small>
+                  <strong>
+                    {money(selectedPeriod.isCurrent
+                      ? dashboard.finance.spentOnReferenceDate
+                      : dashboard.finance.spent / Number(selectedPeriod.endDate.slice(-2)))}
+                  </strong>
+                </span>
+                <button className="mini-action" onClick={() => openLog("Expense")} aria-label="Log expense"><Plus size={17} /></button>
+              </article>
+            </section>
 
-            <div className="worth-chart" role="img" aria-label={`Net worth trend ends at ${money.format(tracker.netWorth)} in ${month}`}>
-              <div className="chart-scale"><span>$35k</span><span>$30k</span><span>$25k</span></div>
-              <div className="chart-stage">
-                <span className="chart-grid-line top" /><span className="chart-grid-line middle" /><span className="chart-grid-line bottom" />
-                {[42, 50, 49, 62, 68, 79, 83, 96, 92, 108, 116, 132].map((height, index) => (
-                  <span className={`worth-bar ${index === 11 ? "current" : ""}`} style={{ height }} key={`${height}-${index}`} />
-                ))}
-              </div>
-              <div className="chart-labels"><span>Feb</span><span>Mar</span><span>Apr</span><span>May</span><span>Jun</span><span>Jul</span></div>
-            </div>
-
-            <div className="worth-breakdown">
-              <div><span className="legend-dot assets" /><p><small>Assets</small><strong>{money.format(assets)}</strong></p></div>
-              <div><span className="legend-dot liabilities" /><p><small>Liabilities</small><strong>{money.format(liabilities)}</strong></p></div>
-              <div className="worth-note"><Sparkles size={15} /><span>Highest point yet</span></div>
-            </div>
-          </article>
-
-          <article className="card budget-card">
-            <div className="card-heading compact">
-              <div><p className="eyebrow">Monthly budget</p><h3>On track</h3></div>
-              <button className="icon-button small" aria-label="Log a budget expense" onClick={() => openLog("Expense")}><MoreHorizontal size={19} /></button>
-            </div>
-            <div className="budget-summary">
-              <div className="budget-ring" style={{ "--progress": `${spendingPercent * 3.6}deg` } as React.CSSProperties}>
-                <div><strong>{spendingPercent}%</strong><span>used</span></div>
-              </div>
-              <div className="budget-numbers">
-                <small>Spent this month</small>
-                <strong>{money.format(tracker.spent)} <span>/ $3,200</span></strong>
-                <p>{remainingBudget >= 0 ? `${money.format(remainingBudget)} left` : `${money.format(Math.abs(remainingBudget))} over`} · {month === "July 2026" ? "8 days remaining" : "month closed"}</p>
-              </div>
-            </div>
-            <div className="budget-categories">
-              {budgetCategories.map((category) => {
-                const percentage = Math.min((category.used / category.limit) * 100, 100);
-                return (
-                  <button className="category-row" key={category.name} onClick={() => openLog("Expense", category.name)}>
-                    <span className={`category-marker ${category.color}`} />
-                    <span className="category-name">{category.name}</span>
-                    <span className="category-track"><span className={category.color} style={{ width: `${percentage}%` }} /></span>
-                    <span className="category-value">{money.format(category.used)} <small>/ {money.format(category.limit)}</small></span>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="budget-footer">
-              <span>Income <strong>{money.format(tracker.income)}</strong></span>
-              <span>Savings rate <strong>{savingsRate}%</strong></span>
-            </div>
-          </article>
-
-          <article className="card workout-card" id="training">
-            <div className="card-heading compact">
-              <div><p className="eyebrow">Training</p><h3>{tracker.workouts} of 4 workouts</h3></div>
-              <span className="status-pill lime"><Zap size={13} /> +6%</span>
-            </div>
-            <p className="card-subtitle">{remainingWorkouts === 0 ? "Weekly goal complete. Nicely done." : `A strong week. ${remainingWorkouts === 1 ? "One session" : `${remainingWorkouts} sessions`} to go.`}</p>
-            <div className="week-row" aria-label={`${tracker.workouts} of 4 workouts completed this week`}>
-              {["M", "T", "W", "T", "F", "S", "S"].map((day, index) => (
-                <div className="day" key={`${day}-${index}`}><span className={index < Math.min(tracker.workouts, 7) ? "done" : index === 4 ? "today" : ""}>{index < Math.min(tracker.workouts, 7) ? <Check size={14} /> : day}</span><small>{["20", "21", "22", "23", "24", "25", "26"][index]}</small></div>
-              ))}
-            </div>
-            <div className="next-session">
-              <span className="session-icon"><Dumbbell size={19} /></span>
-              <span><small>Up next</small><strong>Lower body</strong><em>6 exercises · ~55 min</em></span>
-              <button onClick={() => openLog("Workout")}>Start <ArrowRight size={15} /></button>
-            </div>
-            <div className="workout-stat"><span><small>Weekly volume</small><strong>18,420 kg</strong></span><span><small>Active time</small><strong>2h 47m</strong></span></div>
-          </article>
-
-          <article className="card body-card" id="body">
-            <div className="card-heading compact">
-              <div><p className="eyebrow">Body & nutrition</p><h3>{tracker.weight.toFixed(1)} kg</h3></div>
-              <span className="status-pill blue"><ArrowDownRight size={13} /> 0.6 kg</span>
-            </div>
-            <div className="weight-chart" role="img" aria-label={`Weight trend over 30 days ends at ${tracker.weight.toFixed(1)} kilograms`}>
-              <svg viewBox="0 0 360 90" preserveAspectRatio="none" aria-hidden="true">
-                <path className="weight-area" d="M0,21 C35,15 52,27 82,24 C115,20 130,42 162,37 C195,32 211,52 242,48 C275,43 286,67 320,62 C340,59 350,69 360,67 L360,90 L0,90 Z" />
-                <path className="weight-line" d="M0,21 C35,15 52,27 82,24 C115,20 130,42 162,37 C195,32 211,52 242,48 C275,43 286,67 320,62 C340,59 350,69 360,67" />
-                <circle cx="360" cy="67" r="4" />
-              </svg>
-              <span className="weight-goal">Goal 75 kg</span>
-            </div>
-            <div className="macro-list" id="nutrition">
-              <div className="macro-row"><span><Flame size={16} /> Calories</span><span className="macro-track"><span className="calorie-fill" style={{ width: `${Math.min((tracker.calories / 2250) * 100, 100)}%` }} /></span><strong>{tracker.calories.toLocaleString()} <small>/ 2,250</small></strong></div>
-              <div className="macro-row"><span><Sparkles size={16} /> Protein</span><span className="macro-track"><span className="protein-fill" style={{ width: `${Math.min((tracker.protein / 160) * 100, 100)}%` }} /></span><strong>{tracker.protein}g <small>/ 160g</small></strong></div>
-            </div>
-            <button className="text-action" onClick={() => openLog("Meal")}>Log your next meal <ArrowRight size={15} /></button>
-          </article>
-
-          <article className="card savings-card">
-            <div className="card-heading compact">
-              <div><p className="eyebrow">Savings goals</p><h3>{formatCompact(tracker.saved)} set aside</h3></div>
-              <button className="icon-button small" onClick={() => openLog("Savings")} aria-label="Add savings"><Plus size={18} /></button>
-            </div>
-            <p className="card-subtitle">You’re ahead of your July plan.</p>
-            <div className="goal-list">
-              <button className="goal-row" onClick={() => openLog("Savings")}>
-                <span className="goal-icon emergency">🛟</span>
-                <span className="goal-copy"><span><strong>Emergency fund</strong><em>{emergencyProgress}%</em></span><span className="goal-track"><span style={{ width: `${emergencyProgress}%` }} /></span><small>{money.format(emergencyFund)} of $12,000</small></span>
-              </button>
-              <button className="goal-row" onClick={() => openLog("Savings")}>
-                <span className="goal-icon trip">✈</span>
-                <span className="goal-copy"><span><strong>Japan trip</strong><em>53%</em></span><span className="goal-track"><span style={{ width: "53%" }} /></span><small>$2,100 of $4,000</small></span>
-              </button>
-            </div>
-            <div className="savings-insight"><Sparkles size={15} /><span>At this pace, your emergency fund will be ready <strong>2 months early.</strong></span></div>
-          </article>
-
-          <article className="card activity-card">
-            <div className="card-heading compact">
-              <div><p className="eyebrow">Recent activity</p><h3>Everything you’ve logged</h3></div>
-              <button className="quiet-button" onClick={() => openLog()}>Add entry <Plus size={15} /></button>
-            </div>
-            <div className="activity-list">
-              {tracker.activities.slice(0, 5).map((activity) => (
-                <div className="activity-row" key={activity.id}>
-                  <IconBadge kind={activity.kind} tone={activity.tone} />
-                  <span className="activity-copy"><strong>{activity.title}</strong><small>{activity.detail}</small></span>
-                  <strong className="activity-value">{activity.value}</strong>
+            <section className="dashboard-grid" aria-label={`${selectedPeriod.label} overview`}>
+              <article className="card net-worth-card" id="money">
+                <div className="card-heading">
+                  <div><p className="eyebrow">Net worth</p><h2>{money(dashboard.wealth.netWorth)}</h2></div>
+                  <button className="quiet-button" onClick={() => showNotice(dashboard.wealth.asOfLabel)}>Data source <ArrowUpRight size={15} /></button>
                 </div>
-              ))}
-            </div>
-          </article>
+                <div className={`positive-change ${dashboard.wealth.change !== null && dashboard.wealth.change < 0 ? "negative" : ""}`}>
+                  {dashboard.wealth.change !== null && dashboard.wealth.change < 0
+                    ? <ArrowDownRight size={15} />
+                    : <TrendingUp size={15} />}
+                  {dashboard.wealth.change === null
+                    ? "No snapshot comparison"
+                    : `${dashboard.wealth.change >= 0 ? "+" : "−"}${money(Math.abs(dashboard.wealth.change))}`}
+                  <span>{dashboard.wealth.changePercent === null ? dashboard.wealth.asOfLabel : `${dashboard.wealth.changePercent >= 0 ? "+" : ""}${dashboard.wealth.changePercent.toFixed(1)}% between snapshots`}</span>
+                </div>
 
-          <article className="card momentum-card">
-            <p className="eyebrow">Monthly momentum</p>
-            <div className="momentum-score"><strong>82</strong><span>/ 100</span></div>
-            <h3>You’re building real momentum.</h3>
-            <p>Money and training are leading the way. A little more sleep consistency will lift everything else.</p>
-            <div className="momentum-tags"><span><CheckCircle2 size={14} /> Budget</span><span><CheckCircle2 size={14} /> Training</span><span className="watch"><Flame size={14} /> Sleep</span></div>
-          </article>
-        </section>
+                <div className="worth-chart" role="img" aria-label={`Net worth history ending at ${money(dashboard.wealth.netWorth)}`}>
+                  <div className="chart-scale">
+                    <span>{formatCompact(worthMaximum, currency)}</span>
+                    <span>{formatCompact((worthMaximum + worthMinimum) / 2, currency)}</span>
+                    <span>{formatCompact(worthMinimum, currency)}</span>
+                  </div>
+                  <div className="chart-stage">
+                    <span className="chart-grid-line top" /><span className="chart-grid-line middle" /><span className="chart-grid-line bottom" />
+                    {worthBarHeights.length > 0 ? worthBarHeights.map((height, index) => (
+                      <span
+                        className={`worth-bar ${index === worthBarHeights.length - 1 ? "current" : ""}`}
+                        style={{ height }}
+                        key={dashboard.wealth.points[index].id}
+                      />
+                    )) : <span className="chart-empty">No snapshots for this period</span>}
+                  </div>
+                  <div className="chart-labels">
+                    {dashboard.wealth.points.map((point) => (
+                      <span key={point.id}>{new Intl.DateTimeFormat("en-US", { month: "short", timeZone: "UTC" }).format(new Date(point.recordedAt))}</span>
+                    ))}
+                  </div>
+                </div>
 
-        <footer className="page-footer"><span>Better Tracker keeps your personal progress in one calm place.</span><button onClick={resetDemo}><RotateCcw size={14} /> Reset demo data</button></footer>
+                <div className="worth-breakdown">
+                  <div><span className="legend-dot assets" /><p><small>Assets</small><strong>{money(dashboard.wealth.assets)}</strong></p></div>
+                  <div><span className="legend-dot liabilities" /><p><small>Liabilities</small><strong>{money(dashboard.wealth.liabilities)}</strong></p></div>
+                  <div className="worth-note"><Sparkles size={15} /><span>{dashboard.wealth.asOfLabel}</span></div>
+                </div>
+              </article>
+
+              <article className="card budget-card">
+                <div className="card-heading compact">
+                  <div>
+                    <p className="eyebrow">Monthly budget</p>
+                    <h3>{dashboard.finance.totalBudget === 0 ? "No budget set" : dashboard.finance.budgetRemaining >= 0 ? "On track" : "Over budget"}</h3>
+                  </div>
+                  <button className="icon-button small" aria-label="Log a budget expense" onClick={() => openLog("Expense")}><MoreHorizontal size={19} /></button>
+                </div>
+                <div className="budget-summary">
+                  <div
+                    className="budget-ring"
+                    style={{
+                      "--progress": `${dashboard.finance.totalBudget > 0
+                        ? Math.min((dashboard.finance.spent / dashboard.finance.totalBudget) * 360, 360)
+                        : 0}deg`,
+                    } as CSSProperties}
+                  >
+                    <div>
+                      <strong>{dashboard.finance.totalBudget > 0 ? `${Math.min(Math.round((dashboard.finance.spent / dashboard.finance.totalBudget) * 100), 100)}%` : "—"}</strong>
+                      <span>used</span>
+                    </div>
+                  </div>
+                  <div className="budget-numbers">
+                    <small>Spent this month</small>
+                    <strong>{money(dashboard.finance.spent)} <span>{dashboard.finance.totalBudget > 0 ? `/ ${money(dashboard.finance.totalBudget)}` : ""}</span></strong>
+                    <p>{dashboard.finance.totalBudget > 0
+                      ? `${money(Math.abs(dashboard.finance.budgetRemaining))} ${dashboard.finance.budgetRemaining >= 0 ? "left" : "over"} · ${selectedPeriod.isCurrent ? `${selectedPeriod.daysRemaining} days remaining` : "month closed"}`
+                      : "Add monthly budgets through the finance API"}</p>
+                  </div>
+                </div>
+                <div className="budget-categories">
+                  {dashboard.finance.categories.length > 0 ? dashboard.finance.categories.slice(0, 4).map((category) => {
+                    const percentage = category.limit && category.limit > 0
+                      ? Math.min((category.used / category.limit) * 100, 100)
+                      : category.used > 0 ? 100 : 0;
+                    return (
+                      <button className="category-row" key={category.name} onClick={() => openLog("Expense", category.name)}>
+                        <span className={`category-marker ${category.color}`} />
+                        <span className="category-name">{category.name}</span>
+                        <span className="category-track"><span className={category.color} style={{ width: `${percentage}%` }} /></span>
+                        <span className="category-value">{money(category.used)} {category.limit !== null && <small>/ {money(category.limit)}</small>}</span>
+                      </button>
+                    );
+                  }) : <p className="card-empty">No spending or budgets logged for this month.</p>}
+                </div>
+                <div className="budget-footer">
+                  <span>Income <strong>{money(dashboard.finance.income)}</strong></span>
+                  <span>Savings rate <strong>{dashboard.finance.income > 0 ? `${Math.max(Math.round((dashboard.finance.net / dashboard.finance.income) * 100), 0)}%` : "—"}</strong></span>
+                </div>
+              </article>
+
+              <article className="card workout-card" id="training">
+                <div className="card-heading compact">
+                  <div><p className="eyebrow">Training</p><h3>{dashboard.training.weekCount} of 4 workouts</h3></div>
+                  <span className="status-pill lime"><Zap size={13} /> {dashboard.training.monthCount} this month</span>
+                </div>
+                <p className="card-subtitle">{remainingWorkouts === 0 ? "Weekly goal complete. Nicely done." : `${remainingWorkouts} ${remainingWorkouts === 1 ? "session" : "sessions"} left in this reference week.`}</p>
+                <div className="week-row" role="group" aria-label={`${dashboard.training.weekCount} workouts completed in the reference week`}>
+                  {weekDays.map((day) => {
+                    const complete = completedWorkoutDates.has(day.key);
+                    return (
+                      <div className="day" key={day.key}>
+                        <span className={complete ? "done" : day.key === selectedPeriod.referenceDate ? "today" : ""}>{complete ? <Check size={14} /> : day.day}</span>
+                        <small>{day.date}</small>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="next-session">
+                  <span className="session-icon"><Dumbbell size={19} /></span>
+                  <span>
+                    <small>{dashboard.training.latestWorkout ? "Latest session" : "Training log"}</small>
+                    <strong>{dashboard.training.latestWorkout?.name ?? "No sessions yet"}</strong>
+                    <em>{dashboard.training.latestWorkout
+                      ? `${dashboard.training.latestWorkout.exerciseCount} exercises · ${dashboard.training.latestWorkout.durationMinutes ?? 0} min`
+                      : "Add your first completed workout"}</em>
+                  </span>
+                  <button onClick={() => openLog("Workout")}>Log <ArrowRight size={15} /></button>
+                </div>
+                <div className="workout-stat">
+                  <span><small>Monthly volume</small><strong>{dashboard.training.totalVolumeKg.toLocaleString()} kg</strong></span>
+                  <span><small>Active time</small><strong>{formatDuration(dashboard.training.totalDurationMinutes)}</strong></span>
+                </div>
+              </article>
+
+              <article className="card body-card" id="body">
+                <div className="card-heading compact">
+                  <div><p className="eyebrow">Body & nutrition</p><h3>{dashboard.health.weight === null ? "No weight" : `${dashboard.health.weight.toFixed(1)} kg`}</h3></div>
+                  <span className="status-pill blue">
+                    {dashboard.health.weightChange !== null && dashboard.health.weightChange > 0
+                      ? <ArrowUpRight size={13} />
+                      : <ArrowDownRight size={13} />}
+                    {dashboard.health.weightChange === null ? "No trend" : `${Math.abs(dashboard.health.weightChange).toFixed(1)} kg`}
+                  </span>
+                </div>
+                <div className="weight-chart" role="img" aria-label={dashboard.health.weight === null ? "No weight data for this period" : `Weight trend ends at ${dashboard.health.weight.toFixed(1)} kilograms`}>
+                  {weightChart ? (
+                    <>
+                      <svg viewBox="0 0 360 90" preserveAspectRatio="none" aria-hidden="true">
+                        <path className="weight-area" d={weightChart.area} />
+                        <path className="weight-line" d={weightChart.line} />
+                        <circle cx={weightChart.last.x} cy={weightChart.last.y} r="4" />
+                      </svg>
+                      <span className="weight-goal">Range {weightChart.minimum.toFixed(1)}–{weightChart.maximum.toFixed(1)} kg</span>
+                    </>
+                  ) : <p className="chart-empty">Log a weight entry to start the trend.</p>}
+                </div>
+                <div className="macro-list" id="nutrition">
+                  <div className="macro-row">
+                    <span><Flame size={16} /> Calories</span>
+                    <span className="macro-track"><span className="calorie-fill" style={{ width: `${calorieTarget ? Math.min((calories / calorieTarget) * 100, 100) : calories > 0 ? 100 : 0}%` }} /></span>
+                    <strong>{calories.toLocaleString()} <small>{calorieTarget ? `/ ${calorieTarget.toLocaleString()}` : "/ no target"}</small></strong>
+                  </div>
+                  <div className="macro-row">
+                    <span><Sparkles size={16} /> Protein</span>
+                    <span className="macro-track"><span className="protein-fill" style={{ width: `${proteinShare}%` }} /></span>
+                    <strong>{protein.toLocaleString()}g <small>{proteinShare}% kcal</small></strong>
+                  </div>
+                </div>
+                <button className="text-action" onClick={() => openLog("Meal")}>Log food for {formatShortDate(selectedPeriod.referenceDate)} <ArrowRight size={15} /></button>
+              </article>
+
+              <article className="card savings-card">
+                <div className="card-heading compact">
+                  <div><p className="eyebrow">Savings goals</p><h3>{formatCompact(totalGoalCurrent, currency)} set aside</h3></div>
+                  <button className="icon-button small" onClick={() => openLog("Savings")} aria-label="Add savings"><Plus size={18} /></button>
+                </div>
+                <p className="card-subtitle">{dashboard.wealth.savedThisPeriod === 0
+                  ? `No goal contributions in ${selectedPeriod.label}.`
+                  : `${money(dashboard.wealth.savedThisPeriod)} contributed in ${selectedPeriod.label}.`}</p>
+                <div className="goal-list">
+                  {dashboard.goals.length > 0 ? dashboard.goals.slice(0, 2).map((goal, index) => (
+                    <button className="goal-row" onClick={() => openLog("Savings")} key={goal.id}>
+                      <span className={`goal-icon ${index === 0 ? "emergency" : "trip"}`}>{index === 0 ? "🛟" : "✦"}</span>
+                      <span className="goal-copy">
+                        <span><strong>{goal.name}</strong><em>{Math.min(Math.round(goal.progress), 100)}%</em></span>
+                        <span className="goal-track"><span style={{ width: `${Math.min(goal.progress, 100)}%` }} /></span>
+                        <small>{money(goal.current)} of {money(goal.target)}</small>
+                      </span>
+                    </button>
+                  )) : <p className="card-empty">No savings goals yet. Your first contribution can create one.</p>}
+                </div>
+                <div className="savings-insight"><Sparkles size={15} /><span>{dashboard.goals.length > 0
+                  ? `${dashboard.goals.length} active ${dashboard.goals.length === 1 ? "goal" : "goals"} with a ${money(totalGoalTarget)} combined target.`
+                  : "Quick log a savings entry to create your first goal."}</span></div>
+              </article>
+
+              <article className="card activity-card">
+                <div className="card-heading compact">
+                  <div><p className="eyebrow">Recent activity</p><h3>Everything you’ve logged</h3></div>
+                  <button className="quiet-button" onClick={() => openLog()}>Add entry <Plus size={15} /></button>
+                </div>
+                <div className="activity-list">
+                  {dashboard.activities.length > 0 ? dashboard.activities.slice(0, 5).map((activity) => (
+                    <div className="activity-row" key={activity.id}>
+                      <IconBadge kind={activity.kind} tone={activity.tone} />
+                      <span className="activity-copy"><strong>{activity.title}</strong><small>{activity.detail}</small></span>
+                      <strong className="activity-value">{activity.value}</strong>
+                    </div>
+                  )) : <p className="card-empty activity-empty">No entries logged for {selectedPeriod.label}.</p>}
+                </div>
+              </article>
+
+              <article className="card momentum-card">
+                <p className="eyebrow">Tracking coverage</p>
+                <div className="momentum-score"><strong>{dashboard.coverage.score}</strong><span>/ 100</span></div>
+                <h3>{dashboard.coverage.score === 100 ? "Every area has real data." : "Your dashboard is taking shape."}</h3>
+                <p>{dashboard.coverage.missing.length > 0
+                  ? `Add ${dashboard.coverage.missing.join(", ").toLowerCase()} entries to complete this month’s view.`
+                  : `All five tracking areas have entries in ${selectedPeriod.label}.`}</p>
+                <div className="momentum-tags">
+                  {(["Money", "Training", "Nutrition"] as const).map((area) => {
+                    const complete = dashboard.coverage.tracked.includes(area);
+                    return <span className={complete ? "" : "watch"} key={area}>{complete ? <CheckCircle2 size={14} /> : <Flame size={14} />}{area}</span>;
+                  })}
+                </div>
+              </article>
+            </section>
+          </>
+        )}
+
+        <footer className="page-footer">
+          <span>Better Tracker is showing records from your FastAPI backend.</span>
+          <button onClick={refreshData}><RotateCcw size={14} className={loading ? "spin" : ""} /> Refresh data</button>
+        </footer>
       </main>
 
       <nav className="mobile-nav" aria-label="Mobile navigation">
-        {navigation.map(({ label, icon: Icon, target }) => (
-          <button className={activeNav === label ? "active" : ""} key={label} onClick={() => navigateTo(label, target)} aria-label={label}>
+        {navigation.map(({ label, icon: Icon, href }) => (
+          <Link className={label === "Overview" ? "active" : ""} key={label} href={href} aria-label={label} aria-current={label === "Overview" ? "page" : undefined}>
             <Icon size={19} /><span>{label}</span>
-          </button>
+          </Link>
         ))}
         <button className="mobile-add" onClick={() => openLog()} aria-label="Quick log"><Plus size={23} /></button>
       </nav>
 
       {dialogOpen && (
-        <div className="dialog-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) setDialogOpen(false); }}>
+        <div className="dialog-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target && !saving) setDialogOpen(false); }}>
           <section className="quick-dialog" role="dialog" aria-modal="true" aria-labelledby="quick-log-title" ref={dialogRef}>
             <div className="dialog-header">
-              <div><p className="eyebrow">Quick log</p><h2 id="quick-log-title">Add to your day</h2></div>
-              <button className="icon-button" onClick={() => setDialogOpen(false)} aria-label="Close quick log"><X size={20} /></button>
+              <div><p className="eyebrow">Quick log</p><h2 id="quick-log-title">Add to your backend</h2></div>
+              <button className="icon-button" onClick={() => setDialogOpen(false)} aria-label="Close quick log" disabled={saving}><X size={20} /></button>
             </div>
             <div className="log-tabs" aria-label="Entry type">
               {logTypes.map(({ label, icon: Icon }) => (
-                <button type="button" aria-pressed={logType === label} className={logType === label ? "active" : ""} key={label} onClick={() => setLogType(label)}>
+                <button type="button" aria-pressed={logType === label} className={logType === label ? "active" : ""} key={label} onClick={() => setLogType(label)} disabled={saving}>
                   <Icon size={17} /><span>{label}</span>
                 </button>
               ))}
             </div>
             <form className="log-form" onSubmit={handleLog} key={logType}>
-              <label>
-                <span>{logType === "Workout" ? "Session name" : logType === "Meal" ? "Meal or food" : logType === "Savings" ? "Goal" : logType === "Weight" ? "Note" : "Description"}</span>
-                <input name="description" required={logType !== "Weight"} defaultValue={logType === "Expense" ? "Coffee & lunch" : logType === "Workout" ? "Lower body" : logType === "Meal" ? "Dinner" : logType === "Savings" ? "Emergency fund" : ""} placeholder="Add a short description" />
-              </label>
+              {logType === "Savings" ? (
+                savingsGoals.length > 0 ? (
+                  <label>
+                    <span>Goal</span>
+                    <select name="goalId" defaultValue={savingsGoals[0].id} required>
+                      {savingsGoals.map((goal) => <option value={goal.id} key={goal.id}>{goal.name}</option>)}
+                    </select>
+                  </label>
+                ) : (
+                  <>
+                    <label><span>New goal name</span><input name="newGoalName" required defaultValue="Emergency fund" maxLength={120} /></label>
+                    <label><span>Goal target</span><div className="input-unit"><input name="newGoalTarget" type="number" min="0.01" step="0.01" defaultValue="12000" required /><em>{currency}</em></div></label>
+                  </>
+                )
+              ) : (
+                <label>
+                  <span>{logType === "Workout" ? "Session name" : logType === "Meal" ? "Meal or food" : logType === "Weight" ? "Note" : "Description"}</span>
+                  <input
+                    name="description"
+                    required={logType !== "Weight"}
+                    defaultValue={logType === "Expense" ? "Coffee & lunch" : logType === "Workout" ? "Lower body" : logType === "Meal" ? "Dinner" : ""}
+                    placeholder="Add a short description"
+                    maxLength={logType === "Workout" ? 200 : 500}
+                  />
+                </label>
+              )}
               {logType === "Expense" && (
-                <label><span>Category</span><select name="category" defaultValue={defaultCategory}><option>Housing</option><option>Food</option><option>Transport</option><option>Lifestyle</option></select></label>
+                <label>
+                  <span>Category</span>
+                  <select name="category" defaultValue={defaultCategory}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select>
+                </label>
               )}
               <div className="form-grid">
                 {logType === "Workout" ? (
@@ -663,26 +813,48 @@ export default function Home() {
                 ) : (
                   <label>
                     <span>{logType === "Meal" ? "Calories" : logType === "Weight" ? "Weight" : "Amount"}</span>
-                    <div className="input-unit"><input name="value" type="number" min="0.1" step={logType === "Weight" ? "0.1" : "0.01"} defaultValue={logType === "Meal" ? "540" : logType === "Weight" ? tracker.weight : "25"} required /><em>{logType === "Meal" ? "kcal" : logType === "Weight" ? "kg" : "USD"}</em></div>
+                    <div className="input-unit">
+                      <input
+                        name="value"
+                        type="number"
+                        min={logType === "Meal" ? "1" : "0.01"}
+                        step={logType === "Meal" ? "1" : logType === "Weight" ? "0.01" : "0.01"}
+                        defaultValue={logType === "Meal" ? "540" : logType === "Weight" ? dashboard?.health.weight ?? "" : "25"}
+                        required
+                      />
+                      <em>{logType === "Meal" ? "kcal" : logType === "Weight" ? "kg" : currency}</em>
+                    </div>
                   </label>
                 )}
                 {logType === "Meal" ? (
-                  <label><span>Protein</span><div className="input-unit"><input name="protein" type="number" min="0" defaultValue="32" /><em>g</em></div></label>
+                  <label><span>Protein</span><div className="input-unit"><input name="protein" type="number" min="0" step="0.01" defaultValue="32" /><em>g</em></div></label>
                 ) : (
-                  <label><span>Date</span><input name="date" type="date" defaultValue="2026-07-24" required /></label>
+                  <label><span>Date</span><input name="date" type="date" min={selectedPeriod.startDate} max={selectedPeriod.endDate} defaultValue={selectedPeriod.referenceDate} required /></label>
                 )}
               </div>
-              <div className="dialog-note"><Sparkles size={16} /><span>This updates your overview instantly and stays on this device.</span></div>
-              <div className="dialog-actions"><button type="button" className="secondary-button" onClick={() => setDialogOpen(false)}>Cancel</button><button className="submit-button" type="submit"><Check size={17} /> Save {logType.toLowerCase()}</button></div>
+              {logType === "Meal" && (
+                <div className="form-grid">
+                  <label><span>Calorie target (optional)</span><div className="input-unit"><input name="calorieTarget" type="number" min="1" defaultValue={dashboard?.health.calorieTarget ?? ""} /><em>kcal</em></div></label>
+                  <label><span>Date</span><input name="date" type="date" min={selectedPeriod.startDate} max={selectedPeriod.endDate} defaultValue={selectedPeriod.referenceDate} required /></label>
+                </div>
+              )}
+              <div className="dialog-note"><Sparkles size={16} /><span>This saves directly to FastAPI and refreshes your dashboard from the database.</span></div>
+              <div className="dialog-actions">
+                <button type="button" className="secondary-button" onClick={() => setDialogOpen(false)} disabled={saving}>Cancel</button>
+                <button className="submit-button" type="submit" disabled={saving}>
+                  {saving ? <RotateCcw size={17} className="spin" /> : <Check size={17} />} {saving ? "Saving…" : `Save ${logType.toLowerCase()}`}
+                </button>
+              </div>
             </form>
           </section>
         </div>
       )}
 
       {toast && (
-        <div className="toast" role="status" aria-live="polite">
-          <span className="toast-check"><Check size={15} /></span><span>{toast}</span>
-          {canUndo && <button onClick={undoLastLog}>Undo</button>}
+        <div className={`toast ${toast.tone}`} role={toast.tone === "error" ? "alert" : "status"} aria-live="polite">
+          <span className="toast-check">{toast.tone === "error" ? <X size={15} /> : <Check size={15} />}</span>
+          <span>{toast.message}</span>
+          {toast.undo && <button onClick={undoLastLog} disabled={undoing}>{undoing ? "Undoing…" : "Undo"}</button>}
           <button className="toast-close" onClick={() => setToast(null)} aria-label="Dismiss"><X size={15} /></button>
         </div>
       )}

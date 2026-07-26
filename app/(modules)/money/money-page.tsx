@@ -39,7 +39,9 @@ import {
   deleteRecord,
   disconnectMonobank,
   disconnectPrivatBank,
+  fetchMonobankConnection,
   fetchMoneyData,
+  fetchPrivatBankConnection,
   type FinancialAccount,
   type FinancialTransaction,
   type MonobankAccount,
@@ -109,7 +111,7 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
     const [requestedPeriod, requestedCurrency] = requestKey.split("|");
     return fetchMoneyData(requestedPeriod, requestedCurrency, signal);
   }, []);
-  const { data, loading, error, refresh } = useModuleData(`${periodKey}|${selectedCurrency}`, moneyLoader);
+  const { data, loading, error, refresh, updateData } = useModuleData(`${periodKey}|${selectedCurrency}`, moneyLoader);
   const [tab, setTab] = useState<"cashflow" | "wealth">("cashflow");
   const [dialog, setDialog] = useState<MoneyDialog | null>(null);
   const [saving, setSaving] = useState(false);
@@ -132,22 +134,59 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
     return Array.from(values).sort((left, right) => left === "UAH" ? -1 : right === "UAH" ? 1 : left.localeCompare(right));
   }, [data?.currencies, selectedCurrency]);
 
+  const shouldPollMonobank = data?.monobank.sync_status === "running" || monobankSyncAwaitingRefresh;
+  const shouldPollPrivatBank = data?.privatbank.sync_status === "running" || privatBankSyncAwaitingRefresh;
+
   useEffect(() => {
-    if (
-      data?.monobank.sync_status !== "running"
-      && data?.privatbank.sync_status !== "running"
-      && !monobankSyncAwaitingRefresh
-      && !privatBankSyncAwaitingRefresh
-    ) return;
-    const timer = window.setInterval(refresh, 2500);
-    return () => window.clearInterval(timer);
-  }, [
-    data?.monobank.sync_status,
-    data?.privatbank.sync_status,
-    monobankSyncAwaitingRefresh,
-    privatBankSyncAwaitingRefresh,
-    refresh,
-  ]);
+    if (!shouldPollMonobank && !shouldPollPrivatBank) return;
+    const controller = new AbortController();
+    let requestRunning = false;
+
+    const pollConnections = async () => {
+      if (requestRunning) return;
+      requestRunning = true;
+      try {
+        const [monobank, privatbank] = await Promise.all([
+          shouldPollMonobank
+            ? fetchMonobankConnection(controller.signal)
+            : Promise.resolve(null),
+          shouldPollPrivatBank
+            ? fetchPrivatBankConnection(controller.signal)
+            : Promise.resolve(null),
+        ]);
+        if (controller.signal.aborted) return;
+        updateData((current) => ({
+          ...current,
+          monobank: monobank ?? current.monobank,
+          privatbank: privatbank ?? current.privatbank,
+        }));
+      } catch (reason) {
+        if (
+          !controller.signal.aborted
+          && !(reason instanceof DOMException && reason.name === "AbortError")
+        ) {
+          console.warn("[money-sync-poll] Connection status refresh failed", reason);
+        }
+      } finally {
+        requestRunning = false;
+      }
+    };
+
+    const pollAfterResume = () => {
+      if (document.visibilityState === "visible") void pollConnections();
+    };
+
+    void pollConnections();
+    const timer = window.setInterval(() => void pollConnections(), 2500);
+    window.addEventListener("focus", pollAfterResume);
+    document.addEventListener("visibilitychange", pollAfterResume);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+      window.removeEventListener("focus", pollAfterResume);
+      document.removeEventListener("visibilitychange", pollAfterResume);
+    };
+  }, [shouldPollMonobank, shouldPollPrivatBank, updateData]);
 
   useEffect(() => {
     const currentStatus = data?.monobank.sync_status ?? null;
@@ -255,11 +294,23 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
     }
     setIntegrationBusy(true);
     try {
-      await startMonobankSync(monobankSyncDateFrom, monobankSyncDateTo);
+      const accepted = await startMonobankSync(monobankSyncDateFrom, monobankSyncDateTo);
       monobankSyncBaseline.current = data?.monobank.last_sync_started_at ?? null;
       setMonobankSyncAwaitingRefresh(true);
+      updateData((current) => ({
+        ...current,
+        monobank: {
+          ...current.monobank,
+          sync_status: accepted.status,
+          sync_progress_current: accepted.sync_progress_current,
+          sync_progress_total: accepted.sync_progress_total,
+          sync_error: null,
+          sync_date_from: accepted.date_from,
+          sync_date_to: accepted.date_to,
+          last_sync_completed_at: null,
+        },
+      }));
       setToast({ message: `Monobank sync started for ${monobankSyncDateFrom} – ${monobankSyncDateTo}`, tone: "success" });
-      refresh();
     } catch (reason) {
       reportError(reason, "Could not start Monobank sync.");
     } finally {
@@ -322,11 +373,23 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
     }
     setIntegrationBusy(true);
     try {
-      await startPrivatBankSync(privatBankSyncDateFrom, privatBankSyncDateTo);
+      const accepted = await startPrivatBankSync(privatBankSyncDateFrom, privatBankSyncDateTo);
       privatBankSyncBaseline.current = data?.privatbank.last_sync_started_at ?? null;
       setPrivatBankSyncAwaitingRefresh(true);
+      updateData((current) => ({
+        ...current,
+        privatbank: {
+          ...current.privatbank,
+          sync_status: accepted.status,
+          sync_progress_current: accepted.sync_progress_current,
+          sync_progress_total: accepted.sync_progress_total,
+          sync_error: null,
+          sync_date_from: accepted.date_from,
+          sync_date_to: accepted.date_to,
+          last_sync_completed_at: null,
+        },
+      }));
       setToast({ message: `PrivatBank sync started for ${privatBankSyncDateFrom} – ${privatBankSyncDateTo}`, tone: "success" });
-      refresh();
     } catch (reason) {
       reportError(reason, "Could not start PrivatBank sync.");
     } finally {

@@ -35,10 +35,20 @@ export function useModuleData<T>(periodKey: string, loader: Loader<T>) {
     setRevision((value) => value + 1);
   }, []);
 
+  const updateData = useCallback((updater: (current: T) => T) => {
+    setResult((current) => {
+      if (current.data === null) return current;
+      const nextData = updater(current.data);
+      if (Object.is(nextData, current.data)) return current;
+      return { ...current, data: nextData };
+    });
+  }, []);
+
   return {
     data: result.data,
     loading: result.settledKey !== requestKey,
     error: result.settledKey === requestKey ? result.error : null,
     refresh,
+    updateData,
   };
 }

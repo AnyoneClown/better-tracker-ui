@@ -163,7 +163,11 @@ test("ships the secure manual Monobank connection flow", async () => {
   assert.match(money, /monobankSyncDateTo/);
   assert.match(money, /Delete imported transactions/);
   assert.match(money, /sync_progress_current/);
-  assert.match(money, /window\.setInterval\(refresh/);
+  assert.match(moduleApi, /fetchMonobankConnection/);
+  assert.match(money, /window\.setInterval\(\(\) => void pollConnections\(\), 2500\)/);
+  assert.match(money, /visibilitychange/);
+  assert.match(money, /updateData/);
+  assert.doesNotMatch(money, /window\.setInterval\(refresh/);
   assert.match(money, /Money data refreshed/);
   assert.match(money, /Select money currency/);
   assert.match(money, /"UAH"/);
@@ -190,6 +194,7 @@ test("ships the read-only PrivatBank FOP connection flow", async () => {
   assert.match(moduleApi, /\/integrations\/privatbank\/sync/);
   assert.match(moduleApi, /\/integrations\/privatbank\/accounts\/\$\{accountId\}\/transactions/);
   assert.match(moduleApi, /source: "manual" \| "monobank" \| "privatbank"/);
+  assert.match(moduleApi, /fetchPrivatBankConnection/);
   assert.match(money, /Connect PrivatBank FOP/);
   assert.match(money, /Privat24 Business API token/);
   assert.match(money, /privatBankSyncDateFrom/);

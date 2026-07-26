@@ -331,6 +331,24 @@ function request<T>(path: string, signal?: AbortSignal): Promise<T> {
   return apiRequest<T>(path, { signal });
 }
 
+export function fetchMonobankConnection(
+  signal?: AbortSignal,
+): Promise<MonobankConnection> {
+  return request<MonobankConnection>(
+    "/integrations/monobank/connection",
+    signal,
+  );
+}
+
+export function fetchPrivatBankConnection(
+  signal?: AbortSignal,
+): Promise<PrivatBankConnection> {
+  return request<PrivatBankConnection>(
+    "/integrations/privatbank/connection",
+    signal,
+  );
+}
+
 export async function fetchMoneyData(
   periodKey: string,
   currency: string,
@@ -347,8 +365,8 @@ export async function fetchMoneyData(
     request<ListResponse<SavingsGoal>>(`/wealth/savings-goals?currency=${currency}&limit=100`, signal),
     request<ListResponse<NetWorthSnapshot>>(`/wealth/net-worth-snapshots?currency=${currency}&limit=100`, signal),
     request<string[]>("/finance/currencies", signal),
-    request<MonobankConnection>("/integrations/monobank/connection", signal),
-    request<PrivatBankConnection>("/integrations/privatbank/connection", signal),
+    fetchMonobankConnection(signal),
+    fetchPrivatBankConnection(signal),
   ]);
   const contributionPages = await Promise.all(goals.items.map((goal) => request<ListResponse<SavingsContribution>>(
     `/wealth/savings-goals/${goal.id}/contributions?${dateQuery}`,

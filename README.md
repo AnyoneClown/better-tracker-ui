@@ -82,7 +82,9 @@ PrivatBank sync is manual, defaults to the latest 31 calendar days, accepts a
 custom inclusive period, and displays per-account progress. Imported FOP
 transactions are read-only except for category and summary exclusion. Users
 can delete all imported transactions for one account without disconnecting it.
-When sync finishes, the same polling flow reloads the complete Money data tree,
+While a sync runs, the UI polls only the lightweight bank connection endpoints
+and updates progress in place, including immediately after a background tab is
+focused again. When sync finishes, it reloads the complete Money data tree once,
 including transactions, summaries, currencies, balances, and net worth.
 Personal Privat24 cards are intentionally unsupported.
 

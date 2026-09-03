@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
 import { AuthForm } from "@/components/auth-form";
-import { safeReturnPath } from "@/lib/auth";
+import { googleAuthErrorMessage, safeReturnPath } from "@/lib/auth";
 import { getAuthenticatedUser } from "@/lib/server-auth";
 
 export const metadata: Metadata = {
@@ -25,6 +25,7 @@ export default async function LoginPage({ searchParams }: PageProps) {
       mode="login"
       nextPath={nextPath}
       sessionExpired={params.reason === "session-expired"}
+      oauthError={googleAuthErrorMessage(params.oauth_error)}
     />
   );
 }

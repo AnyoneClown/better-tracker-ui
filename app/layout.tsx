@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 const deploymentHost = process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL;
-const metadataBase = new URL(deploymentHost ? `https://${deploymentHost}` : "http://localhost:3000");
+const metadataBase = new URL(deploymentHost ? `https://${deploymentHost}` : "http://localhost:43127");
 const title = "Better Tracker — Your life, in one view";
 const description = "A calm personal dashboard for money, training, nutrition, body goals, and everyday progress.";
 

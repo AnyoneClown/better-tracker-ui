@@ -60,3 +60,14 @@ export function safeReturnPath(value: unknown): string {
     return "/";
   }
 }
+
+export function googleAuthErrorMessage(value: unknown): string | undefined {
+  const reason = Array.isArray(value) ? value[0] : value;
+  if (reason === "cancelled") return "Google sign-in was cancelled.";
+  if (reason === "state") return "Google sign-in expired. Please try again.";
+  if (reason === "config") return "Google sign-in is not configured yet.";
+  if (reason === "exchange" || reason === "unavailable") {
+    return "Could not sign in with Google. Please try again.";
+  }
+  return undefined;
+}

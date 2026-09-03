@@ -169,7 +169,7 @@ type FinancialTransaction = Entity & {
   occurred_on: string;
   currency: string;
   description: string | null;
-  source: "manual" | "monobank" | "privatbank";
+  source: "manual" | "monobank";
   hold: boolean;
   excluded_from_summary: boolean;
 };

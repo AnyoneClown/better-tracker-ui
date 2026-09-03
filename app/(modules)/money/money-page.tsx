@@ -32,26 +32,25 @@ import { useModuleData } from "@/hooks/use-module-data";
 import {
   asNumber,
   connectMonobank,
-  connectPrivatBank,
   createRecord,
+  deleteAllTransactions,
   deleteMonobankAccountTransactions,
-  deletePrivatBankAccountTransactions,
   deleteRecord,
   disconnectMonobank,
-  disconnectPrivatBank,
   fetchMonobankConnection,
   fetchMoneyData,
-  fetchPrivatBankConnection,
+  fetchMoneyTrackingSummary,
+  fetchMoneyTransactionSummary,
   type FinancialAccount,
   type FinancialTransaction,
   type MonobankAccount,
+  type MoneyData,
   type MonthlyBudget,
   type NetWorthSnapshot,
-  type PrivatBankAccount,
   type SavingsContribution,
   type SavingsGoal,
   startMonobankSync,
-  startPrivatBankSync,
+  updateMonobankAccountTracking,
   updateRecord,
 } from "@/lib/module-api";
 import { formatMoney, getPeriod } from "@/lib/tracker-api";
@@ -63,8 +62,7 @@ type MoneyDialog =
   | { kind: "account"; record?: FinancialAccount }
   | { kind: "goal"; record?: SavingsGoal }
   | { kind: "contribution"; goal: SavingsGoal; record?: SavingsContribution }
-  | { kind: "monobank-connect" }
-  | { kind: "privatbank-connect" };
+  | { kind: "monobank-connect" };
 
 function shortDate(date: string): string {
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })
@@ -100,29 +98,69 @@ function shiftDate(value: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
+function updateMonobankTrackingLocally(
+  current: MoneyData,
+  accountId: string,
+  isTracked: boolean,
+): MoneyData {
+  const account = current.monobank.accounts.find((item) => item.id === accountId);
+  if (!account || account.is_tracked === isTracked) return current;
+
+  const balance = asNumber(account.balance);
+  const direction = isTracked ? 1 : -1;
+  const affectsSelectedCurrency = account.currency === current.wealth.currency;
+  const assets = affectsSelectedCurrency && balance > 0
+    ? Math.max(0, asNumber(current.wealth.assets) + direction * balance)
+    : asNumber(current.wealth.assets);
+  const liabilities = affectsSelectedCurrency && balance < 0
+    ? Math.max(0, asNumber(current.wealth.liabilities) + direction * Math.abs(balance))
+    : asNumber(current.wealth.liabilities);
+  const currencies = isTracked && !current.currencies.includes(account.currency)
+    ? [...current.currencies, account.currency].sort((left, right) => (
+      left === "UAH" ? -1 : right === "UAH" ? 1 : left.localeCompare(right)
+    ))
+    : current.currencies;
+
+  return {
+    ...current,
+    wealth: affectsSelectedCurrency
+      ? { ...current.wealth, assets, liabilities, net_worth: assets - liabilities }
+      : current.wealth,
+    currencies,
+    monobank: {
+      ...current.monobank,
+      accounts: current.monobank.accounts.map((item) => (
+        item.id === accountId ? { ...item, is_tracked: isTracked } : item
+      )),
+    },
+  };
+}
+
 export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: string }) {
   const [periodKey, setPeriodKey] = useState(initialPeriodKey);
   const [selectedCurrency, setSelectedCurrency] = useState("UAH");
   const [monobankSyncDateTo, setMonobankSyncDateTo] = useState(() => kyivDate());
   const [monobankSyncDateFrom, setMonobankSyncDateFrom] = useState(() => shiftDate(kyivDate(), -30));
-  const [privatBankSyncDateTo, setPrivatBankSyncDateTo] = useState(() => kyivDate());
-  const [privatBankSyncDateFrom, setPrivatBankSyncDateFrom] = useState(() => shiftDate(kyivDate(), -30));
   const moneyLoader = useCallback((requestKey: string, signal?: AbortSignal) => {
     const [requestedPeriod, requestedCurrency] = requestKey.split("|");
     return fetchMoneyData(requestedPeriod, requestedCurrency, signal);
   }, []);
-  const { data, loading, error, refresh, updateData } = useModuleData(`${periodKey}|${selectedCurrency}`, moneyLoader);
+  const moneyViewKey = `${periodKey}|${selectedCurrency}`;
+  const { data, loading, error, refresh, updateData } = useModuleData(moneyViewKey, moneyLoader);
   const [tab, setTab] = useState<"cashflow" | "wealth">("cashflow");
   const [dialog, setDialog] = useState<MoneyDialog | null>(null);
   const [saving, setSaving] = useState(false);
   const [integrationBusy, setIntegrationBusy] = useState(false);
+  const [monobankTrackingAccountIds, setMonobankTrackingAccountIds] = useState<Set<string>>(() => new Set());
+  const [transactionDeleteTarget, setTransactionDeleteTarget] = useState<string | null>(null);
   const [monobankSyncAwaitingRefresh, setMonobankSyncAwaitingRefresh] = useState(false);
-  const [privatBankSyncAwaitingRefresh, setPrivatBankSyncAwaitingRefresh] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const previousMonobankSyncStatus = useRef<"idle" | "running" | "succeeded" | "failed" | null>(null);
-  const previousPrivatBankSyncStatus = useRef<"idle" | "running" | "succeeded" | "failed" | null>(null);
   const monobankSyncBaseline = useRef<string | null>(null);
-  const privatBankSyncBaseline = useRef<string | null>(null);
+  const monobankTrackingRequestCount = useRef(0);
+  const monobankTrackingRevision = useRef(0);
+  const transactionDeleteBusy = useRef(false);
+  const activeMoneyViewKey = useRef(moneyViewKey);
   const today = kyivDate();
   const period = data?.period ?? getPeriod(periodKey, new Date(`${initialPeriodKey}-15T12:00:00Z`));
   const currency = data?.finance.currency ?? selectedCurrency;
@@ -133,12 +171,17 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
     const values = new Set(["UAH", selectedCurrency, ...(data?.currencies ?? [])]);
     return Array.from(values).sort((left, right) => left === "UAH" ? -1 : right === "UAH" ? 1 : left.localeCompare(right));
   }, [data?.currencies, selectedCurrency]);
+  const trackedMonobankAccountCount = data?.monobank.accounts.filter((account) => account.is_tracked).length ?? 0;
+  const monobankTrackingBusy = monobankTrackingAccountIds.size > 0;
 
   const shouldPollMonobank = data?.monobank.sync_status === "running" || monobankSyncAwaitingRefresh;
-  const shouldPollPrivatBank = data?.privatbank.sync_status === "running" || privatBankSyncAwaitingRefresh;
 
   useEffect(() => {
-    if (!shouldPollMonobank && !shouldPollPrivatBank) return;
+    activeMoneyViewKey.current = moneyViewKey;
+  }, [moneyViewKey]);
+
+  useEffect(() => {
+    if (!shouldPollMonobank) return;
     const controller = new AbortController();
     let requestRunning = false;
 
@@ -146,19 +189,11 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
       if (requestRunning) return;
       requestRunning = true;
       try {
-        const [monobank, privatbank] = await Promise.all([
-          shouldPollMonobank
-            ? fetchMonobankConnection(controller.signal)
-            : Promise.resolve(null),
-          shouldPollPrivatBank
-            ? fetchPrivatBankConnection(controller.signal)
-            : Promise.resolve(null),
-        ]);
+        const monobank = await fetchMonobankConnection(controller.signal);
         if (controller.signal.aborted) return;
         updateData((current) => ({
           ...current,
-          monobank: monobank ?? current.monobank,
-          privatbank: privatbank ?? current.privatbank,
+          monobank,
         }));
       } catch (reason) {
         if (
@@ -186,7 +221,7 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
       window.removeEventListener("focus", pollAfterResume);
       document.removeEventListener("visibilitychange", pollAfterResume);
     };
-  }, [shouldPollMonobank, shouldPollPrivatBank, updateData]);
+  }, [shouldPollMonobank, updateData]);
 
   useEffect(() => {
     const currentStatus = data?.monobank.sync_status ?? null;
@@ -212,32 +247,37 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
     refresh,
   ]);
 
-  useEffect(() => {
-    const currentStatus = data?.privatbank.sync_status ?? null;
-    const previousStatus = previousPrivatBankSyncStatus.current;
-    previousPrivatBankSyncStatus.current = currentStatus;
-    const observedNewSync = privatBankSyncAwaitingRefresh
-      && data?.privatbank.last_sync_started_at !== privatBankSyncBaseline.current;
-    if (currentStatus === "running") return;
-    if (previousStatus !== "running" && !observedNewSync) return;
-    const timer = window.setTimeout(() => {
-      privatBankSyncBaseline.current = data?.privatbank.last_sync_started_at ?? null;
-      setPrivatBankSyncAwaitingRefresh(false);
-      refresh();
-      if (currentStatus === "succeeded") {
-        setToast({ message: "PrivatBank sync complete. Money data refreshed.", tone: "success" });
-      }
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [
-    data?.privatbank.last_sync_started_at,
-    data?.privatbank.sync_status,
-    privatBankSyncAwaitingRefresh,
-    refresh,
-  ]);
-
   const reportError = (reason: unknown, fallback: string) => {
     setToast({ message: reason instanceof Error ? reason.message : fallback, tone: "error" });
+  };
+
+  const beginTransactionDelete = (target: string): boolean => {
+    if (transactionDeleteBusy.current) return false;
+    transactionDeleteBusy.current = true;
+    setTransactionDeleteTarget(target);
+    return true;
+  };
+
+  const finishTransactionDelete = () => {
+    transactionDeleteBusy.current = false;
+    setTransactionDeleteTarget(null);
+  };
+
+  const refreshTransactionSummary = async (
+    requestedPeriodKey: string,
+    requestedCurrency: string,
+  ) => {
+    try {
+      const summary = await fetchMoneyTransactionSummary(
+        requestedPeriodKey,
+        requestedCurrency,
+      );
+      if (activeMoneyViewKey.current === `${requestedPeriodKey}|${requestedCurrency}`) {
+        updateData((current) => ({ ...current, ...summary }));
+      }
+    } catch (reason) {
+      console.warn("[transaction-delete] Summary refresh failed", reason);
+    }
   };
 
   const saveTransaction = async (event: FormEvent<HTMLFormElement>) => {
@@ -288,6 +328,7 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
   };
 
   const syncMonobank = async () => {
+    if (monobankTrackingRequestCount.current > 0) return;
     if (monobankSyncDateFrom > monobankSyncDateTo) {
       setToast({ message: "Sync start date must be on or before the end date.", tone: "error" });
       return;
@@ -321,16 +362,90 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
   const removeMonobankTransactions = async (account: MonobankAccount) => {
     const accountLabel = account.masked_pan[0] ?? `${titleCase(account.card_type)} ${account.currency}`;
     if (!window.confirm(`Delete every imported transaction for ${accountLabel}? The card stays connected, and a future sync can import these transactions again.`)) return;
-    setIntegrationBusy(true);
+    if (!beginTransactionDelete(`monobank:${account.id}`)) return;
+    const requestedPeriodKey = periodKey;
+    const requestedCurrency = selectedCurrency;
     try {
       const result = await deleteMonobankAccountTransactions(account.id);
+      updateData((current) => ({
+        ...current,
+        transactions: current.transactions.filter((transaction) => !(
+          transaction.source === "monobank"
+          && transaction.external_account_id === account.external_id
+        )),
+      }));
       const suffix = result.deleted_count === 1 ? "transaction" : "transactions";
       setToast({ message: `${result.deleted_count} imported ${suffix} deleted`, tone: "success" });
-      refresh();
+      await refreshTransactionSummary(requestedPeriodKey, requestedCurrency);
     } catch (reason) {
       reportError(reason, "Could not delete imported Monobank transactions.");
     } finally {
-      setIntegrationBusy(false);
+      finishTransactionDelete();
+    }
+  };
+
+  const setMonobankAccountTracking = async (
+    account: MonobankAccount,
+    isTracked: boolean,
+  ) => {
+    if (monobankTrackingAccountIds.has(account.id)) return;
+    monobankTrackingRequestCount.current += 1;
+    monobankTrackingRevision.current += 1;
+    setMonobankTrackingAccountIds((current) => {
+      const next = new Set(current);
+      next.add(account.id);
+      return next;
+    });
+    updateData((current) => updateMonobankTrackingLocally(
+      current,
+      account.id,
+      isTracked,
+    ));
+    try {
+      const updatedAccount = await updateMonobankAccountTracking(account.id, isTracked);
+      updateData((current) => ({
+        ...current,
+        monobank: {
+          ...current.monobank,
+          accounts: current.monobank.accounts.map((item) => (
+            item.id === updatedAccount.id ? updatedAccount : item
+          )),
+        },
+      }));
+      setToast({
+        message: isTracked
+          ? "Card added to Monobank tracking"
+          : "Card removed from Monobank tracking",
+        tone: "success",
+      });
+    } catch (reason) {
+      updateData((current) => updateMonobankTrackingLocally(
+        current,
+        account.id,
+        account.is_tracked,
+      ));
+      reportError(reason, "Could not update Monobank card tracking.");
+    } finally {
+      monobankTrackingRequestCount.current -= 1;
+      setMonobankTrackingAccountIds((current) => {
+        const next = new Set(current);
+        next.delete(account.id);
+        return next;
+      });
+      if (monobankTrackingRequestCount.current === 0) {
+        const trackingRevision = monobankTrackingRevision.current;
+        try {
+          const summary = await fetchMoneyTrackingSummary(selectedCurrency);
+          if (
+            monobankTrackingRequestCount.current === 0
+            && monobankTrackingRevision.current === trackingRevision
+          ) {
+            updateData((current) => ({ ...current, ...summary }));
+          }
+        } catch (reason) {
+          console.warn("[monobank-tracking] Summary refresh failed", reason);
+        }
+      }
     }
   };
 
@@ -343,84 +458,6 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
       refresh();
     } catch (reason) {
       reportError(reason, "Could not disconnect Monobank.");
-    } finally {
-      setIntegrationBusy(false);
-    }
-  };
-
-  const savePrivatBankConnection = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (dialog?.kind !== "privatbank-connect") return;
-    const form = new FormData(event.currentTarget);
-    const token = String(form.get("privatbank_token") ?? "").trim();
-    setSaving(true);
-    try {
-      await connectPrivatBank(token);
-      setDialog(null);
-      setToast({ message: "PrivatBank FOP connected", tone: "success" });
-      refresh();
-    } catch (reason) {
-      reportError(reason, "Could not connect PrivatBank.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const syncPrivatBank = async () => {
-    if (privatBankSyncDateFrom > privatBankSyncDateTo) {
-      setToast({ message: "Sync start date must be on or before the end date.", tone: "error" });
-      return;
-    }
-    setIntegrationBusy(true);
-    try {
-      const accepted = await startPrivatBankSync(privatBankSyncDateFrom, privatBankSyncDateTo);
-      privatBankSyncBaseline.current = data?.privatbank.last_sync_started_at ?? null;
-      setPrivatBankSyncAwaitingRefresh(true);
-      updateData((current) => ({
-        ...current,
-        privatbank: {
-          ...current.privatbank,
-          sync_status: accepted.status,
-          sync_progress_current: accepted.sync_progress_current,
-          sync_progress_total: accepted.sync_progress_total,
-          sync_error: null,
-          sync_date_from: accepted.date_from,
-          sync_date_to: accepted.date_to,
-          last_sync_completed_at: null,
-        },
-      }));
-      setToast({ message: `PrivatBank sync started for ${privatBankSyncDateFrom} – ${privatBankSyncDateTo}`, tone: "success" });
-    } catch (reason) {
-      reportError(reason, "Could not start PrivatBank sync.");
-    } finally {
-      setIntegrationBusy(false);
-    }
-  };
-
-  const removePrivatBankTransactions = async (account: PrivatBankAccount) => {
-    if (!window.confirm(`Delete every imported transaction for ${account.masked_iban}? The account stays connected, and a future sync can import these transactions again.`)) return;
-    setIntegrationBusy(true);
-    try {
-      const result = await deletePrivatBankAccountTransactions(account.id);
-      const suffix = result.deleted_count === 1 ? "transaction" : "transactions";
-      setToast({ message: `${result.deleted_count} imported ${suffix} deleted`, tone: "success" });
-      refresh();
-    } catch (reason) {
-      reportError(reason, "Could not delete imported PrivatBank transactions.");
-    } finally {
-      setIntegrationBusy(false);
-    }
-  };
-
-  const removePrivatBankConnection = async () => {
-    if (!window.confirm("Disconnect PrivatBank FOP? Imported transactions will remain in your ledger.")) return;
-    setIntegrationBusy(true);
-    try {
-      await disconnectPrivatBank();
-      setToast({ message: "PrivatBank FOP disconnected", tone: "success" });
-      refresh();
-    } catch (reason) {
-      reportError(reason, "Could not disconnect PrivatBank.");
     } finally {
       setIntegrationBusy(false);
     }
@@ -520,6 +557,46 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
     } finally { setSaving(false); }
   };
 
+  const removeTransaction = async (transaction: FinancialTransaction) => {
+    if (!window.confirm("Delete this transaction?")) return;
+    if (!beginTransactionDelete(`transaction:${transaction.id}`)) return;
+    const requestedPeriodKey = periodKey;
+    const requestedCurrency = selectedCurrency;
+    try {
+      await deleteRecord(`/finance/transactions/${transaction.id}`);
+      updateData((current) => ({
+        ...current,
+        transactions: current.transactions.filter((item) => item.id !== transaction.id),
+      }));
+      setToast({ message: "Transaction deleted", tone: "success" });
+      await refreshTransactionSummary(requestedPeriodKey, requestedCurrency);
+    } catch (reason) {
+      reportError(reason, "Could not delete the transaction.");
+    } finally {
+      finishTransactionDelete();
+    }
+  };
+
+  const removeAllTransactions = async () => {
+    const confirmed = window.confirm(
+      "Delete every transaction across all periods, currencies, and sources? This cannot be undone. Connected bank transactions can return on a future sync.",
+    );
+    if (!confirmed || !beginTransactionDelete("all")) return;
+    const requestedPeriodKey = periodKey;
+    const requestedCurrency = selectedCurrency;
+    try {
+      const result = await deleteAllTransactions();
+      updateData((current) => ({ ...current, transactions: [] }));
+      const suffix = result.deleted_count === 1 ? "transaction" : "transactions";
+      setToast({ message: `${result.deleted_count} ${suffix} deleted`, tone: "success" });
+      await refreshTransactionSummary(requestedPeriodKey, requestedCurrency);
+    } catch (reason) {
+      reportError(reason, "Could not delete all transactions.");
+    } finally {
+      finishTransactionDelete();
+    }
+  };
+
   const remove = async (path: string, label: string) => {
     if (!window.confirm(`Delete this ${label.toLowerCase()}?`)) return;
     try {
@@ -547,7 +624,6 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
         : dialog?.kind === "goal" ? `${dialog.record ? "Edit" : "Add"} savings goal`
           : dialog?.kind === "contribution" ? `${dialog.record ? "Edit" : "Add"} savings activity`
             : dialog?.kind === "monobank-connect" ? "Connect Monobank"
-              : dialog?.kind === "privatbank-connect" ? "Connect PrivatBank FOP"
             : "Money entry";
 
   const totalIncome = asNumber(data?.finance.total_income);
@@ -591,20 +667,20 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
             <>
               <div className="monobank-actions">
                 <div>
-                  <span>{data.monobank.accounts.length} cards</span>
+                  <span>{trackedMonobankAccountCount} of {data.monobank.accounts.length} cards tracked</span>
                   <span>{data.monobank.jars.length} jars</span>
                   <span>Read-only bank data</span>
                 </div>
-                <button className="quiet-danger-button" disabled={integrationBusy} onClick={() => void removeMonobankConnection()}><Unplug size={15} /> Disconnect</button>
+                <button className="quiet-danger-button" disabled={integrationBusy || monobankTrackingBusy || transactionDeleteTarget !== null} onClick={() => void removeMonobankConnection()}><Unplug size={15} /> Disconnect</button>
               </div>
 
               <div className="monobank-sync-controls">
                 <div className="monobank-sync-range">
                   <label><span>From</span><input type="date" value={monobankSyncDateFrom} max={monobankSyncDateTo} disabled={integrationBusy || data.monobank.sync_status === "running"} onChange={(event) => setMonobankSyncDateFrom(event.target.value)} /></label>
                   <label><span>To</span><input type="date" value={monobankSyncDateTo} min={monobankSyncDateFrom} max={today} disabled={integrationBusy || data.monobank.sync_status === "running"} onChange={(event) => setMonobankSyncDateTo(event.target.value)} /></label>
-                  <button className="secondary-button" disabled={integrationBusy || data.monobank.sync_status === "running" || !monobankSyncDateFrom || !monobankSyncDateTo} onClick={() => void syncMonobank()}><RefreshCw size={15} className={data.monobank.sync_status === "running" ? "spin" : ""} /> {data.monobank.sync_status === "running" ? "Syncing…" : "Sync period"}</button>
+                  <button className="secondary-button" disabled={integrationBusy || monobankTrackingBusy || transactionDeleteTarget !== null || data.monobank.sync_status === "running" || trackedMonobankAccountCount === 0 || !monobankSyncDateFrom || !monobankSyncDateTo} onClick={() => void syncMonobank()}><RefreshCw size={15} className={data.monobank.sync_status === "running" ? "spin" : ""} /> {data.monobank.sync_status === "running" ? "Syncing…" : "Sync tracked cards"}</button>
                 </div>
-                <p>Defaults to the latest 31 calendar days. Longer periods are imported in 31-day batches and may take several minutes per card.</p>
+                <p>{trackedMonobankAccountCount === 0 ? "Choose at least one card below before syncing. " : ""}Only tracked cards are included in wealth totals and statement imports. Longer periods are imported in 31-day batches.</p>
               </div>
 
               {data.monobank.sync_status === "running" && (
@@ -622,11 +698,20 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
               {data.monobank.accounts.length > 0 && (
                 <div className="monobank-live-grid">
                   {data.monobank.accounts.map((account) => (
-                    <article className="monobank-account-card" key={account.id}>
+                    <article className={`monobank-account-card ${account.is_tracked ? "tracked" : "untracked"}`} key={account.id}>
                       <div><span className="mono-card-icon"><CreditCard size={17} /></span><span><strong>{account.masked_pan[0] ?? titleCase(account.card_type)}</strong><small>{titleCase(account.card_type)} · {account.currency}</small></span></div>
                       <strong className={asNumber(account.balance) < 0 ? "negative" : ""}>{formatMoney(asNumber(account.balance), account.currency)}</strong>
                       <p>Credit limit <span>{formatMoney(asNumber(account.credit_limit), account.currency)}</span></p>
-                      <button className="monobank-delete-transactions" disabled={integrationBusy || data.monobank.sync_status === "running"} onClick={() => void removeMonobankTransactions(account)}><Trash2 size={13} /> Delete imported transactions</button>
+                      <label className="monobank-track-card">
+                        <input
+                          type="checkbox"
+                          checked={account.is_tracked}
+                          disabled={integrationBusy || data.monobank.sync_status === "running" || monobankTrackingAccountIds.has(account.id)}
+                          onChange={(event) => void setMonobankAccountTracking(account, event.target.checked)}
+                        />
+                        <span><strong>Track this card</strong><small>{account.is_tracked ? "Included in totals and future syncs" : "Excluded from totals and future syncs"}</small></span>
+                      </label>
+                      <button className="monobank-delete-transactions" disabled={integrationBusy || transactionDeleteTarget !== null || data.monobank.sync_status === "running"} onClick={() => void removeMonobankTransactions(account)}><Trash2 size={13} /> Delete imported transactions</button>
                     </article>
                   ))}
                 </div>
@@ -646,70 +731,6 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
                       );
                     })}
                   </div>
-                </div>
-              )}
-            </>
-          )}
-        </section>
-      )}
-      {data && (
-        <section className={`monobank-panel privatbank-panel ${data.privatbank.connected ? "connected" : "disconnected"}`} aria-label="PrivatBank FOP integration">
-          <div className="monobank-heading">
-            <span className="monobank-mark privatbank-mark"><Landmark size={20} /></span>
-            <div>
-              <p className="eyebrow">Business bank connection</p>
-              <h2>{data.privatbank.connected ? data.privatbank.client_name : "PrivatBank FOP"}</h2>
-              <p>{data.privatbank.connected ? `Last sync: ${dateTime(data.privatbank.last_sync_completed_at)}` : "Import balances and statements from Privat24 for Business. FOP accounts only."}</p>
-            </div>
-            {data.privatbank.connected ? (
-              <span className={`connection-badge ${data.privatbank.sync_status ?? "idle"}`}><span /> {data.privatbank.sync_status === "running" ? "Syncing" : "Connected"}</span>
-            ) : (
-              <button className="monobank-connect-button privatbank-connect-button" onClick={() => setDialog({ kind: "privatbank-connect" })}><Link2 size={16} /> Connect PrivatBank</button>
-            )}
-          </div>
-
-          {data.privatbank.connected && (
-            <>
-              <div className="monobank-actions">
-                <div>
-                  <span>{data.privatbank.accounts.length} business accounts</span>
-                  <span>Balances + statements only</span>
-                  <span>Manual sync</span>
-                </div>
-                <button className="quiet-danger-button" disabled={integrationBusy} onClick={() => void removePrivatBankConnection()}><Unplug size={15} /> Disconnect</button>
-              </div>
-
-              <div className="monobank-sync-controls">
-                <div className="monobank-sync-range">
-                  <label><span>From</span><input type="date" value={privatBankSyncDateFrom} max={privatBankSyncDateTo} disabled={integrationBusy || data.privatbank.sync_status === "running"} onChange={(event) => setPrivatBankSyncDateFrom(event.target.value)} /></label>
-                  <label><span>To</span><input type="date" value={privatBankSyncDateTo} min={privatBankSyncDateFrom} max={today} disabled={integrationBusy || data.privatbank.sync_status === "running"} onChange={(event) => setPrivatBankSyncDateTo(event.target.value)} /></label>
-                  <button className="secondary-button" disabled={integrationBusy || data.privatbank.sync_status === "running" || !privatBankSyncDateFrom || !privatBankSyncDateTo} onClick={() => void syncPrivatBank()}><RefreshCw size={15} className={data.privatbank.sync_status === "running" ? "spin" : ""} /> {data.privatbank.sync_status === "running" ? "Syncing…" : "Sync period"}</button>
-                </div>
-                <p>Defaults to the latest 31 calendar days. Longer periods are loaded through the official paginated statement API.</p>
-              </div>
-
-              {data.privatbank.sync_status === "running" && (
-                <div className="monobank-sync-progress" role="status">
-                  <div><span><CloudDownload size={15} /> Importing account {Math.min(data.privatbank.sync_progress_current + 1, Math.max(data.privatbank.sync_progress_total, 1))} of {data.privatbank.sync_progress_total}</span><strong>{data.privatbank.sync_progress_current}/{data.privatbank.sync_progress_total}</strong></div>
-                  <div className="sync-progress-track"><span style={{ width: `${data.privatbank.sync_progress_total ? Math.min((data.privatbank.sync_progress_current / data.privatbank.sync_progress_total) * 100, 100) : 0}%` }} /></div>
-                  <p>{data.privatbank.sync_date_from && data.privatbank.sync_date_to ? `${data.privatbank.sync_date_from} – ${data.privatbank.sync_date_to}. ` : ""}Balances refresh first; each business account is committed separately.</p>
-                </div>
-              )}
-
-              {data.privatbank.sync_status === "failed" && data.privatbank.sync_error && (
-                <div className="monobank-error" role="alert"><CircleAlert size={16} /><span>{data.privatbank.sync_error}</span></div>
-              )}
-
-              {data.privatbank.accounts.length > 0 && (
-                <div className="monobank-live-grid">
-                  {data.privatbank.accounts.map((account) => (
-                    <article className="monobank-account-card privatbank-account-card" key={account.id}>
-                      <div><span className="mono-card-icon privatbank-account-icon"><Banknote size={17} /></span><span><strong>{account.masked_iban}</strong><small>{account.name} · {account.currency}</small></span></div>
-                      <strong className={asNumber(account.balance) < 0 ? "negative" : ""}>{formatMoney(asNumber(account.balance), account.currency)}</strong>
-                      <p>Last movement <span>{dateTime(account.last_movement_at)}</span></p>
-                      <button className="monobank-delete-transactions" disabled={integrationBusy || data.privatbank.sync_status === "running"} onClick={() => void removePrivatBankTransactions(account)}><Trash2 size={13} /> Delete imported transactions</button>
-                    </article>
-                  ))}
                 </div>
               )}
             </>
@@ -748,15 +769,28 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
             </section>
 
             <section className="module-section transaction-module">
-              <div className="section-heading"><div><p className="eyebrow">Ledger</p><h2>Transactions</h2></div><span className="record-count">{data.transactions.length} records</span></div>
+              <div className="section-heading">
+                <div><p className="eyebrow">Ledger</p><h2>Transactions</h2></div>
+                <div className="section-heading-actions">
+                  <span className="record-count">{data.transactions.length} records</span>
+                  <button
+                    className="section-delete-all"
+                    disabled={integrationBusy || transactionDeleteTarget !== null || data.monobank.sync_status === "running"}
+                    onClick={() => void removeAllTransactions()}
+                    aria-label="Delete all transactions"
+                  >
+                    <Trash2 size={13} /> Delete all
+                  </button>
+                </div>
+              </div>
               {data.transactions.length > 0 ? (
                 <div className="transaction-list">
                   {data.transactions.map((transaction) => (
                     <article className={`transaction-row ${transaction.hold ? "pending" : ""} ${transaction.excluded_from_summary ? "excluded" : ""}`} key={transaction.id}>
                       <span className={`transaction-icon ${transaction.kind}`} >{transaction.kind === "income" ? <ArrowUpRight size={17} /> : <ArrowDownRight size={17} />}</span>
-                      <div className="record-primary"><h3>{transaction.description || titleCase(transaction.category)}</h3><p>{titleCase(transaction.category)} · {shortDate(transaction.occurred_on)} {transaction.source === "monobank" && <span className="record-badge monobank">Monobank</span>} {transaction.source === "privatbank" && <span className="record-badge privatbank">PrivatBank FOP</span>} {transaction.hold && <span className="record-badge pending">Pending</span>} {transaction.excluded_from_summary && <span className="record-badge excluded">Excluded</span>}</p></div>
+                      <div className="record-primary"><h3>{transaction.description || titleCase(transaction.category)}</h3><p>{titleCase(transaction.category)} · {shortDate(transaction.occurred_on)} {transaction.source === "monobank" && <span className="record-badge monobank">Monobank</span>} {transaction.hold && <span className="record-badge pending">Pending</span>} {transaction.excluded_from_summary && <span className="record-badge excluded">Excluded</span>}</p></div>
                       <strong className={`transaction-amount ${transaction.kind}`}>{transaction.kind === "expense" ? "−" : "+"}{money(asNumber(transaction.amount))}</strong>
-                      <div className="record-actions"><button onClick={() => setDialog({ kind: "transaction", record: transaction })} aria-label={transaction.source === "manual" ? "Edit transaction" : "Categorize imported bank transaction"}><Edit3 size={16} /></button>{transaction.source === "manual" && <button className="danger" onClick={() => void remove(`/finance/transactions/${transaction.id}`, "Transaction")} aria-label="Delete transaction"><Trash2 size={16} /></button>}</div>
+                      <div className="record-actions"><button onClick={() => setDialog({ kind: "transaction", record: transaction })} aria-label={transaction.source === "manual" ? "Edit transaction" : "Categorize imported bank transaction"}><Edit3 size={16} /></button>{transaction.source === "manual" && <button className="danger" disabled={transactionDeleteTarget !== null} onClick={() => void removeTransaction(transaction)} aria-label="Delete transaction"><Trash2 size={16} /></button>}</div>
                     </article>
                   ))}
                 </div>
@@ -896,13 +930,6 @@ export default function MoneyPage({ initialPeriodKey }: { initialPeriodKey: stri
           <SaveActions saving={saving} onCancel={closeDialog} label="Connect securely" />
         </form>}
 
-        {dialog?.kind === "privatbank-connect" && <form className="log-form monobank-connect-form" onSubmit={savePrivatBankConnection}>
-          <div className="dialog-note monobank-note"><ShieldCheck size={17} /><span>Your Privat24 Business API token is sent only to the Better Tracker backend, encrypted with a separate Fernet key, and never returned to or stored by the browser.</span></div>
-          <label><span>Privat24 Business API token</span><input name="privatbank_token" type="password" autoComplete="off" spellCheck={false} placeholder="Paste your Privat24 Business token" required /></label>
-          <p className="field-help">In Privat24 for Business open Accounting and reports → Integration (AutoClient) → API. Enable service restrictions and select only “Get account balances and transactions”.</p>
-          <div className="connection-scope"><strong>FOP read-only import</strong><span>Business account names, balances, and a user-selected statement period (one month by default). Better Tracker implements no payment, invoice, payroll, or document-writing API calls.</span></div>
-          <SaveActions saving={saving} onCancel={closeDialog} label="Connect securely" />
-        </form>}
       </ModuleDialog>
       {toast && <ModuleToast {...toast} onClose={() => setToast(null)} />}
     </>

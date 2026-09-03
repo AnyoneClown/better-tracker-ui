@@ -99,6 +99,26 @@ test("ships secure multi-user authentication", async () => {
   }
 });
 
+test("ships Google OAuth through the existing secure session", async () => {
+  const [authForm, googleRoute, auth] = await Promise.all([
+    readFile(new URL("../components/auth-form.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/auth/google/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/auth.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(authForm, /Continue with Google/);
+  assert.match(googleRoute, /randomBytes/);
+  assert.match(googleRoute, /timingSafeEqual/);
+  assert.match(googleRoute, /code_challenge/);
+  assert.match(googleRoute, /\/api\/v1\/auth\/google\/authorize/);
+  assert.match(googleRoute, /\/api\/v1\/auth\/google\/exchange/);
+  assert.match(googleRoute, /httpOnly: true/);
+  assert.match(googleRoute, /sameSite: "lax"/);
+  assert.match(googleRoute, /setSessionCookie/);
+  assert.match(auth, /googleAuthErrorMessage/);
+  assert.doesNotMatch(googleRoute, /localStorage|sessionStorage/);
+});
+
 test("removes the previous Sites runtime surface", async () => {
   await Promise.all([
     assert.rejects(access(new URL("../.openai", import.meta.url))),
@@ -154,14 +174,24 @@ test("ships the secure manual Monobank connection flow", async () => {
 
   assert.match(moduleApi, /\/integrations\/monobank\/connection/);
   assert.match(moduleApi, /\/integrations\/monobank\/sync/);
+  assert.match(moduleApi, /updateMonobankAccountTracking/);
+  assert.match(moduleApi, /is_tracked/);
   assert.match(moduleApi, /\/integrations\/monobank\/accounts\/\$\{accountId\}\/transactions/);
   assert.match(moduleApi, /\/finance\/currencies/);
   assert.match(money, /type="password"/);
   assert.match(money, /Connect Monobank/);
-  assert.match(money, /Sync period/);
   assert.match(money, /monobankSyncDateFrom/);
   assert.match(money, /monobankSyncDateTo/);
   assert.match(money, /Delete imported transactions/);
+  assert.match(money, /Track this card/);
+  assert.match(money, /Sync tracked cards/);
+  assert.match(moduleApi, /fetchMoneyTrackingSummary/);
+  const trackingHandler = money.slice(
+    money.indexOf("const setMonobankAccountTracking"),
+    money.indexOf("const removeMonobankConnection"),
+  );
+  assert.doesNotMatch(trackingHandler, /setIntegrationBusy/);
+  assert.doesNotMatch(trackingHandler, /\brefresh\(\)/);
   assert.match(money, /sync_progress_current/);
   assert.match(moduleApi, /fetchMonobankConnection/);
   assert.match(money, /window\.setInterval\(\(\) => void pollConnections\(\), 2500\)/);
@@ -183,32 +213,43 @@ test("ships the secure manual Monobank connection flow", async () => {
   }
 });
 
-test("ships the read-only PrivatBank FOP connection flow", async () => {
-  const [money, moduleApi, readme] = await Promise.all([
+test("deletes transactions without reloading the full Money data tree", async () => {
+  const [money, moduleApi] = await Promise.all([
     readFile(new URL("../app/(modules)/money/money-page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/module-api.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(moduleApi, /deleteAllTransactions/);
+  assert.match(moduleApi, /fetchMoneyTransactionSummary/);
+  assert.match(money, /Delete all transactions/);
+  assert.match(money, /> Delete all/);
+
+  const handlers = [
+    money.slice(
+      money.indexOf("const removeMonobankTransactions"),
+      money.indexOf("const setMonobankAccountTracking"),
+    ),
+    money.slice(
+      money.indexOf("const removeTransaction"),
+      money.indexOf("const remove ="),
+    ),
+  ];
+  for (const handler of handlers) {
+    assert.doesNotMatch(handler, /setIntegrationBusy/);
+    assert.doesNotMatch(handler, /\brefresh\(\)/);
+    assert.match(handler, /updateData/);
+  }
+});
+
+test("does not ship the removed PrivatBank integration", async () => {
+  const [money, moduleApi, styles, readme] = await Promise.all([
+    readFile(new URL("../app/(modules)/money/money-page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/module-api.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../README.md", import.meta.url), "utf8"),
   ]);
 
-  assert.match(moduleApi, /\/integrations\/privatbank\/connection/);
-  assert.match(moduleApi, /\/integrations\/privatbank\/sync/);
-  assert.match(moduleApi, /\/integrations\/privatbank\/accounts\/\$\{accountId\}\/transactions/);
-  assert.match(moduleApi, /source: "manual" \| "monobank" \| "privatbank"/);
-  assert.match(moduleApi, /fetchPrivatBankConnection/);
-  assert.match(money, /Connect PrivatBank FOP/);
-  assert.match(money, /Privat24 Business API token/);
-  assert.match(money, /privatBankSyncDateFrom/);
-  assert.match(money, /privatBankSyncDateTo/);
-  assert.match(money, /PrivatBank sync complete\. Money data refreshed\./);
-  assert.match(money, /privatBankSyncAwaitingRefresh/);
-  assert.match(money, /privatBankSyncBaseline/);
-  assert.match(money, /last_sync_started_at/);
-  assert.match(money, />PrivatBank FOP</);
-  assert.match(money, /Get account balances and transactions/);
-  assert.match(readme, /PrivatBank FOP/);
-  assert.match(readme, /never stores either token in browser\s+storage/);
-
-  for (const source of [money, moduleApi]) {
-    assert.doesNotMatch(source, /localStorage|sessionStorage/);
+  for (const source of [money, moduleApi, styles, readme]) {
+    assert.doesNotMatch(source, /privatbank|privat24/i);
   }
 });

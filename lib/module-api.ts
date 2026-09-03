@@ -43,7 +43,7 @@ export type FinancialTransaction = Entity & {
   occurred_on: string;
   currency: string;
   description: string | null;
-  source: "manual" | "monobank" | "privatbank";
+  source: "manual" | "monobank";
   external_account_id: string | null;
   external_transaction_id: string | null;
   occurred_at: string | null;
@@ -53,6 +53,10 @@ export type FinancialTransaction = Entity & {
   category_override: string | null;
   excluded_from_summary: boolean;
   provider_metadata: Record<string, unknown> | null;
+};
+
+export type FinancialTransactionsDeleteResponse = {
+  deleted_count: number;
 };
 
 export type MonthlyBudget = Entity & {
@@ -121,6 +125,7 @@ export type MonobankAccount = Entity & {
   masked_pan: string[];
   iban: string | null;
   cashback_type: string | null;
+  is_tracked: boolean;
 };
 
 export type MonobankJar = Entity & {
@@ -163,45 +168,6 @@ export type MonobankSyncAccepted = {
 };
 
 export type MonobankTransactionsDeleteResponse = {
-  account_id: string;
-  deleted_count: number;
-};
-
-export type PrivatBankAccount = Entity & {
-  external_id: string;
-  masked_iban: string;
-  name: string;
-  balance: DecimalValue;
-  currency: string;
-  last_movement_at: string | null;
-};
-
-export type PrivatBankConnection = {
-  connected: boolean;
-  id: string | null;
-  client_name: string | null;
-  server_metadata: Record<string, unknown> | null;
-  sync_status: "idle" | "running" | "succeeded" | "failed" | null;
-  sync_progress_current: number;
-  sync_progress_total: number;
-  sync_error: string | null;
-  sync_date_from: string | null;
-  sync_date_to: string | null;
-  connected_at: string | null;
-  last_sync_started_at: string | null;
-  last_sync_completed_at: string | null;
-  accounts: PrivatBankAccount[];
-};
-
-export type PrivatBankSyncAccepted = {
-  status: "running";
-  sync_progress_current: number;
-  sync_progress_total: number;
-  date_from: string;
-  date_to: string;
-};
-
-export type PrivatBankTransactionsDeleteResponse = {
   account_id: string;
   deleted_count: number;
 };
@@ -288,7 +254,6 @@ export type MoneyData = {
   snapshots: NetWorthSnapshot[];
   currencies: string[];
   monobank: MonobankConnection;
-  privatbank: PrivatBankConnection;
 };
 
 export type TrainingData = {
@@ -340,15 +305,6 @@ export function fetchMonobankConnection(
   );
 }
 
-export function fetchPrivatBankConnection(
-  signal?: AbortSignal,
-): Promise<PrivatBankConnection> {
-  return request<PrivatBankConnection>(
-    "/integrations/privatbank/connection",
-    signal,
-  );
-}
-
 export async function fetchMoneyData(
   periodKey: string,
   currency: string,
@@ -356,7 +312,7 @@ export async function fetchMoneyData(
 ): Promise<MoneyData> {
   const period = getPeriod(periodKey);
   const dateQuery = query({ start_date: period.startDate, end_date: period.endDate, limit: 100 });
-  const [finance, transactions, budgets, wealth, accounts, goals, snapshots, currencies, monobank, privatbank] = await Promise.all([
+  const [finance, transactions, budgets, wealth, accounts, goals, snapshots, currencies, monobank] = await Promise.all([
     request<FinanceSummary>(`/finance/summary?${query({ year: period.year, month: period.month, currency })}`, signal),
     request<ListResponse<FinancialTransaction>>(`/finance/transactions?${dateQuery}&currency=${currency}`, signal),
     request<ListResponse<MonthlyBudget>>(`/finance/budgets?${query({ year: period.year, month: period.month, currency, limit: 100 })}`, signal),
@@ -366,7 +322,6 @@ export async function fetchMoneyData(
     request<ListResponse<NetWorthSnapshot>>(`/wealth/net-worth-snapshots?currency=${currency}&limit=100`, signal),
     request<string[]>("/finance/currencies", signal),
     fetchMonobankConnection(signal),
-    fetchPrivatBankConnection(signal),
   ]);
   const contributionPages = await Promise.all(goals.items.map((goal) => request<ListResponse<SavingsContribution>>(
     `/wealth/savings-goals/${goal.id}/contributions?${dateQuery}`,
@@ -384,8 +339,36 @@ export async function fetchMoneyData(
     snapshots: snapshots.items,
     currencies,
     monobank,
-    privatbank,
   };
+}
+
+export async function fetchMoneyTrackingSummary(
+  currency: string,
+): Promise<Pick<MoneyData, "wealth" | "currencies">> {
+  const [wealth, currencies] = await Promise.all([
+    request<WealthSummary>(`/wealth/summary?currency=${currency}`),
+    request<string[]>("/finance/currencies"),
+  ]);
+  return { wealth, currencies };
+}
+
+export async function fetchMoneyTransactionSummary(
+  periodKey: string,
+  currency: string,
+): Promise<Pick<MoneyData, "finance" | "currencies">> {
+  const period = getPeriod(periodKey);
+  const [finance, currencies] = await Promise.all([
+    request<FinanceSummary>(`/finance/summary?${query({ year: period.year, month: period.month, currency })}`),
+    request<string[]>("/finance/currencies"),
+  ]);
+  return { finance, currencies };
+}
+
+export async function deleteAllTransactions(): Promise<FinancialTransactionsDeleteResponse> {
+  return apiRequest<FinancialTransactionsDeleteResponse>(
+    "/finance/transactions",
+    { method: "DELETE" },
+  );
 }
 
 export async function connectMonobank(token: string): Promise<MonobankConnection> {
@@ -405,6 +388,19 @@ export async function startMonobankSync(
   });
 }
 
+export async function updateMonobankAccountTracking(
+  accountId: string,
+  isTracked: boolean,
+): Promise<MonobankAccount> {
+  return apiRequest<MonobankAccount>(
+    `/integrations/monobank/accounts/${accountId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ is_tracked: isTracked }),
+    },
+  );
+}
+
 export async function deleteMonobankAccountTransactions(
   accountId: string,
 ): Promise<MonobankTransactionsDeleteResponse> {
@@ -416,36 +412,6 @@ export async function deleteMonobankAccountTransactions(
 
 export async function disconnectMonobank(): Promise<void> {
   await apiRequest("/integrations/monobank/connection", { method: "DELETE" });
-}
-
-export async function connectPrivatBank(token: string): Promise<PrivatBankConnection> {
-  return apiRequest<PrivatBankConnection>("/integrations/privatbank/connection", {
-    method: "POST",
-    body: JSON.stringify({ token }),
-  });
-}
-
-export async function startPrivatBankSync(
-  dateFrom: string,
-  dateTo: string,
-): Promise<PrivatBankSyncAccepted> {
-  return apiRequest<PrivatBankSyncAccepted>("/integrations/privatbank/sync", {
-    method: "POST",
-    body: JSON.stringify({ date_from: dateFrom, date_to: dateTo }),
-  });
-}
-
-export async function deletePrivatBankAccountTransactions(
-  accountId: string,
-): Promise<PrivatBankTransactionsDeleteResponse> {
-  return apiRequest<PrivatBankTransactionsDeleteResponse>(
-    `/integrations/privatbank/accounts/${accountId}/transactions`,
-    { method: "DELETE" },
-  );
-}
-
-export async function disconnectPrivatBank(): Promise<void> {
-  await apiRequest("/integrations/privatbank/connection", { method: "DELETE" });
 }
 
 export async function fetchTrainingData(periodKey: string, signal?: AbortSignal): Promise<TrainingData> {

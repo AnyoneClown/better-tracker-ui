@@ -39,10 +39,12 @@ export function AuthForm({
   mode,
   nextPath,
   sessionExpired = false,
+  oauthError,
 }: {
   mode: AuthMode;
   nextPath: string;
   sessionExpired?: boolean;
+  oauthError?: string;
 }) {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -60,6 +62,7 @@ export function AuthForm({
     { label: "At least one symbol", met: /[^A-Za-z0-9\s]/.test(password) },
   ];
   const otherModeUrl = `${isRegistration ? "/login" : "/register"}?next=${encodeURIComponent(nextPath)}`;
+  const displayedError = error ?? oauthError;
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -130,17 +133,23 @@ export function AuthForm({
               : "Use the email and password tied to your tracker."}</p>
           </div>
 
-          {sessionExpired && !error && (
+          {sessionExpired && !displayedError && (
             <div className="auth-notice" role="status">
               <LockKeyhole size={16} />
               <span>Your session expired. Sign in again to continue.</span>
             </div>
           )}
-          {error && (
+          {displayedError && (
             <div className="auth-error" role="alert">
-              <span>{error}</span>
+              <span>{displayedError}</span>
             </div>
           )}
+
+          <a className="auth-google" href={`/api/auth/google?mode=${mode}&next=${encodeURIComponent(nextPath)}`}>
+            <span aria-hidden="true">G</span>
+            Continue with Google
+          </a>
+          <div className="auth-divider"><span>or continue with email</span></div>
 
           <form className="auth-form" onSubmit={handleSubmit} aria-busy={submitting}>
             <label>

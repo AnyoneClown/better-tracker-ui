@@ -19,7 +19,7 @@ development. Set it in `.env.local` when the API uses another address, then open
 `http://localhost:43127`. The development server listens on all interfaces, so
 this Raspberry Pi is also available at <http://192.168.0.103:43127>.
 Set `BETTER_TRACKER_APP_URL` to the public frontend origin when it differs from
-the local default; it is used for social metadata URLs.
+the local default; it is used for social metadata and OAuth callback URLs.
 
 To enable Google sign-in, create a Google OAuth 2.0 Web application and add
 `http://localhost:43127/api/auth/google` as an authorized redirect URI. Set its

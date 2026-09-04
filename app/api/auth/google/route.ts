@@ -74,12 +74,16 @@ function clearOAuthCookie(response: NextResponse): void {
   });
 }
 
+function appUrl(request: NextRequest, path: string): URL {
+  return new URL(path, process.env.BETTER_TRACKER_APP_URL ?? request.url);
+}
+
 function authError(
   request: NextRequest,
   reason: string,
   flow?: OAuthFlow | null,
 ): NextResponse {
-  const target = new URL(`/${flow?.mode ?? "login"}`, request.url);
+  const target = appUrl(request, `/${flow?.mode ?? "login"}`);
   target.searchParams.set("next", flow?.nextPath ?? "/");
   target.searchParams.set("oauth_error", reason);
   const response = NextResponse.redirect(target);
@@ -96,7 +100,7 @@ async function startGoogleOAuth(request: NextRequest): Promise<NextResponse> {
   const state = randomBytes(32).toString("base64url");
   const verifier = randomBytes(48).toString("base64url");
   const codeChallenge = createHash("sha256").update(verifier).digest("base64url");
-  const redirectUri = new URL("/api/auth/google", request.nextUrl.origin).toString();
+  const redirectUri = appUrl(request, "/api/auth/google").toString();
   const target = backendUrl("/api/v1/auth/google/authorize");
   if (!target) return authError(request, "config", { state, verifier, nextPath, mode });
   target.searchParams.set("redirect_uri", redirectUri);
@@ -163,7 +167,7 @@ async function finishGoogleOAuth(request: NextRequest): Promise<NextResponse> {
 
   const target = backendUrl("/api/v1/auth/google/exchange");
   if (!target) return authError(request, "config", flow);
-  const redirectUri = new URL("/api/auth/google", request.nextUrl.origin).toString();
+  const redirectUri = appUrl(request, "/api/auth/google").toString();
   let upstream: Response;
   try {
     upstream = await fetch(target, {
@@ -184,7 +188,7 @@ async function finishGoogleOAuth(request: NextRequest): Promise<NextResponse> {
     return authError(request, upstream.status === 503 ? "config" : "exchange", flow);
   }
 
-  const response = NextResponse.redirect(new URL(flow.nextPath, request.url));
+  const response = NextResponse.redirect(appUrl(request, flow.nextPath));
   response.headers.set("Cache-Control", "no-store");
   setSessionCookie(response, payload.access_token, payload.expires_in, payload.user_id);
   clearOAuthCookie(response);

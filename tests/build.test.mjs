@@ -182,6 +182,7 @@ test("ships Google OAuth through the existing secure session", async () => {
   assert.match(googleRoute, /code_challenge/);
   assert.match(googleRoute, /\/api\/v1\/auth\/google\/authorize/);
   assert.match(googleRoute, /\/api\/v1\/auth\/google\/exchange/);
+  assert.match(googleRoute, /BETTER_TRACKER_APP_URL/);
   assert.match(googleRoute, /httpOnly: true/);
   assert.match(googleRoute, /sameSite: "lax"/);
   assert.match(googleRoute, /setSessionCookie/);

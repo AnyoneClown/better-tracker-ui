@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { AUTH_COOKIE_NAME, isAuthUser } from "@/lib/auth";
+import {
+  accessTokenSecondsRemaining,
+  AUTH_COOKIE_NAME,
+  isAuthUser,
+} from "@/lib/auth";
 import { backendUrl } from "@/lib/backend";
-import { clearSessionCookie } from "@/lib/session-cookie";
+import { clearSessionCookie, setAuthUserMarkerCookie } from "@/lib/session-cookie";
 
 export const dynamic = "force-dynamic";
 
@@ -49,5 +53,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return response;
   }
 
-  return json({ user: payload }, 200);
+  const markerMaxAge = accessTokenSecondsRemaining(token);
+  if (markerMaxAge === null || markerMaxAge === 0) {
+    const response = json({ detail: "Not authenticated" }, 401);
+    clearSessionCookie(response);
+    return response;
+  }
+
+  const response = json({ user: payload }, 200);
+  setAuthUserMarkerCookie(response, payload.id, markerMaxAge);
+  return response;
 }

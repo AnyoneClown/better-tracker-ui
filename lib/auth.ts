@@ -1,5 +1,23 @@
 export const AUTH_COOKIE_NAME = "better_tracker_session";
 
+export function accessTokenSecondsRemaining(
+  accessToken: string,
+  nowSeconds = Date.now() / 1000,
+): number | null {
+  try {
+    const encoded = accessToken.split(".")[1];
+    if (!encoded) return null;
+    const base64 = encoded.replaceAll("-", "+").replaceAll("_", "/");
+    const payload = JSON.parse(atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "="))) as {
+      exp?: unknown;
+    };
+    if (typeof payload.exp !== "number" || !Number.isFinite(payload.exp)) return null;
+    return Math.max(Math.ceil(payload.exp - nowSeconds), 0);
+  } catch {
+    return null;
+  }
+}
+
 export type AuthUser = {
   id: string;
   email: string;

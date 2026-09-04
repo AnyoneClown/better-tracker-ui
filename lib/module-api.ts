@@ -1,5 +1,4 @@
 import { apiRequest, getPeriod, type Period } from "@/lib/tracker-api";
-import { moneyMonthRange } from "@/lib/money-overview";
 
 export type DecimalValue = string | number;
 
@@ -315,44 +314,14 @@ export async function fetchMoneyData(
   signal?: AbortSignal,
 ): Promise<MoneyData> {
   const period = getPeriod(periodKey);
-  const dateQuery = query({ start_date: period.startDate, end_date: period.endDate, limit: 100 });
-  const transactionQuery = query({
-    start_date: period.startDate,
-    end_date: period.endDate,
+  const workspace = await request<Omit<MoneyData, "period">>(`/money/workspace?${query({
+    year: period.year,
+    month: period.month,
     currency,
     include_ignored: includeIgnored,
-    kind: category ? "expense" : undefined,
     category,
-    limit: 100,
-  });
-  const [finance, transactions, budgets, wealth, accounts, goals, snapshots, currencies, monobank] = await Promise.all([
-    request<FinanceSummary>(`/finance/summary?${query({ year: period.year, month: period.month, currency })}`, signal),
-    request<ListResponse<FinancialTransaction>>(`/finance/transactions?${transactionQuery}`, signal),
-    request<ListResponse<MonthlyBudget>>(`/finance/budgets?${query({ year: period.year, month: period.month, currency, limit: 100 })}`, signal),
-    request<WealthSummary>(`/wealth/summary?currency=${currency}`, signal),
-    request<ListResponse<FinancialAccount>>(`/wealth/accounts?currency=${currency}&limit=100`, signal),
-    request<ListResponse<SavingsGoal>>(`/wealth/savings-goals?currency=${currency}&limit=100`, signal),
-    request<ListResponse<NetWorthSnapshot>>(`/wealth/net-worth-snapshots?currency=${currency}&limit=100`, signal),
-    request<string[]>("/finance/currencies", signal),
-    fetchMonobankConnection(signal),
-  ]);
-  const contributionPages = await Promise.all(goals.items.map((goal) => request<ListResponse<SavingsContribution>>(
-    `/wealth/savings-goals/${goal.id}/contributions?${dateQuery}`,
-    signal,
-  )));
-  return {
-    period,
-    finance,
-    transactions: transactions.items,
-    budgets: budgets.items,
-    wealth,
-    accounts: accounts.items,
-    goals: goals.items,
-    contributions: contributionPages.flatMap((page) => page.items),
-    snapshots: snapshots.items,
-    currencies,
-    monobank,
-  };
+  })}`, signal);
+  return { period, ...workspace };
 }
 
 export async function fetchMoneyTrackingSummary(
@@ -386,10 +355,11 @@ export function fetchMoneyOverview(
   currency: string,
   signal?: AbortSignal,
 ): Promise<FinanceSummary[]> {
-  return Promise.all(moneyMonthRange(startMonth, endMonth).map((periodKey) => {
-    const period = getPeriod(periodKey);
-    return request<FinanceSummary>(`/finance/summary?${query({ year: period.year, month: period.month, currency })}`, signal);
-  }));
+  return request<FinanceSummary[]>(`/money/summaries?${query({
+    start_month: startMonth,
+    end_month: endMonth,
+    currency,
+  })}`, signal);
 }
 
 export async function fetchMoneyCategoryTransactions(

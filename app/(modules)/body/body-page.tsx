@@ -54,7 +54,7 @@ function WeightChart({ entries }: { entries: WeightEntry[] }) {
 export default function BodyPage({ initialPeriodKey, latestPeriodKey }: { initialPeriodKey: string; latestPeriodKey: string }) {
   const { intlLocale, t } = useLocale();
   const [periodKey, setPeriodKey] = useState(initialPeriodKey);
-  const { data, loading, stale, error, refresh } = useModuleData(periodKey, fetchBodyData);
+  const { data, loading, stale, error, refresh } = useModuleData("body", periodKey, fetchBodyData);
   const [editing, setEditing] = useState<WeightEntry | "new" | null>(null);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);

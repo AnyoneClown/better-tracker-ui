@@ -1,11 +1,11 @@
 "use client";
 
 import { Languages, LoaderCircle, LogOut } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import type { AuthUser } from "@/lib/auth";
-import { useLocale } from "@/lib/i18n";
+import { announceAuthenticatedUser, useLocale } from "@/lib/i18n";
+import { clearModuleDataSnapshots } from "@/lib/module-data-cache";
 
 function initials(email: string): string {
   const name = email.split("@", 1)[0] ?? "BT";
@@ -23,7 +23,6 @@ export function AccountSummary({
   user: AuthUser;
   compact?: boolean;
 }) {
-  const router = useRouter();
   const { locale, setLocale, t } = useLocale();
   const [signingOut, setSigningOut] = useState(false);
   const [changingLocale, setChangingLocale] = useState(false);
@@ -39,8 +38,9 @@ export function AccountSummary({
         credentials: "same-origin",
       });
       if (!response.ok) throw new Error(t("Sign out failed", "Не вдалося вийти"));
-      router.replace("/login");
-      router.refresh();
+      clearModuleDataSnapshots(user.id);
+      announceAuthenticatedUser(null);
+      window.location.replace("/login");
     } catch {
       setError(t("Could not sign out. Please try again.", "Не вдалося вийти. Спробуйте ще раз."));
       setSigningOut(false);

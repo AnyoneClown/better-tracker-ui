@@ -45,7 +45,7 @@ function shortMonth(date: string, locale: string): string {
 export default function NutritionPage({ initialPeriodKey, latestPeriodKey }: { initialPeriodKey: string; latestPeriodKey: string }) {
   const { intlLocale, t } = useLocale();
   const [periodKey, setPeriodKey] = useState(initialPeriodKey);
-  const { data, loading, stale, error, refresh } = useModuleData(periodKey, fetchNutritionData);
+  const { data, loading, stale, error, refresh } = useModuleData("nutrition", periodKey, fetchNutritionData);
   const [editing, setEditing] = useState<NutritionLog | "new" | null>(null);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);

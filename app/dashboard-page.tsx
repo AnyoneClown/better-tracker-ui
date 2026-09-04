@@ -29,6 +29,7 @@ import Link from "next/link";
 import {
   type CSSProperties,
   type FormEvent,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -36,6 +37,7 @@ import {
 } from "react";
 
 import { AccountSummary } from "@/components/account-summary";
+import { useModuleData } from "@/hooks/use-module-data";
 import type { AuthUser } from "@/lib/auth";
 import { LocaleProvider, useLocale } from "@/lib/i18n";
 import {
@@ -203,44 +205,34 @@ function LocalizedDashboardPage({ user, initialCurrency }: { user: AuthUser; ini
   const periodOptions = useMemo(() => getPeriodOptions(12, new Date(), intlLocale), [intlLocale]);
   const [periodKey, setPeriodKey] = useState(() => getPeriodOptions()[0].key);
   const [currencyKey, setCurrencyKey] = useState(initialCurrency);
-  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const dashboardLoader = useCallback((requestKey: string, signal?: AbortSignal) => {
+    const [requestedPeriod, requestedCurrency, requestedLocale] = requestKey.split("|");
+    return fetchDashboard(requestedPeriod, signal, requestedLocale, requestedCurrency);
+  }, []);
+  const dashboardViewKey = `${periodKey}|${currencyKey}|${intlLocale}`;
+  const {
+    data: dashboard,
+    loading,
+    stale: dashboardStale,
+    error: loadError,
+    refresh: refreshData,
+  } = useModuleData<DashboardData>("dashboard", dashboardViewKey, dashboardLoader);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [logType, setLogType] = useState<LogType>("Expense");
   const [defaultCategory, setDefaultCategory] = useState("Food");
   const [toast, setToast] = useState<ToastState | null>(null);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [undoing, setUndoing] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [refreshVersion, setRefreshVersion] = useState(0);
   const dialogRef = useRef<HTMLElement | null>(null);
   const lastFocusedRef = useRef<HTMLElement | null>(null);
 
   const rawPeriod = dashboard?.period ?? getPeriod(periodKey);
   const selectedPeriod = { ...rawPeriod, label: getPeriod(rawPeriod.key, new Date(), intlLocale).label };
   const currency = dashboard?.currency ?? currencyKey;
-  const dashboardStale = dashboard !== null && (dashboard.period.key !== periodKey || dashboard.currency !== currencyKey);
   const currencies = Array.from(new Set([currencyKey, ...(dashboard?.currencies ?? [])]));
   const money = (value: number) => formatMoney(value, currency, intlLocale);
   const logLabel = (type: LogType) => t(type === "Meal" ? "Daily nutrition" : type, ({ Expense: "Витрата", Income: "Дохід", Workout: "Тренування", Meal: "Харчування за день", Weight: "Вага", Savings: "Заощадження" })[type]);
   const areaLabel = (area: string) => ({ Money: "Фінанси", Training: "Тренування", Nutrition: "Харчування", Body: "Тіло", Savings: "Заощадження" })[area] ?? area;
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetchDashboard(periodKey, controller.signal, intlLocale, currencyKey)
-      .then((data) => {
-        setDashboard(data);
-        setLoadError(null);
-      })
-      .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") return;
-        setLoadError(error instanceof Error ? error.message : t("The backend request failed.", "Помилка запиту до сервера."));
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
-      });
-    return () => controller.abort();
-  }, [currencyKey, intlLocale, periodKey, refreshVersion, t]);
 
   useEffect(() => {
     if (!dialogOpen) return;
@@ -285,24 +277,12 @@ function LocalizedDashboardPage({ user, initialCurrency }: { user: AuthUser; ini
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  const refreshData = () => {
-    setLoading(true);
-    setLoadError(null);
-    setRefreshVersion((value) => value + 1);
-  };
-
   const changePeriod = (nextPeriod: string) => {
     setPeriodKey(nextPeriod);
-    setLoading(true);
-    setLoadError(null);
     setToast({ message: `${t("Loading", "Завантажуємо")} ${getPeriod(nextPeriod, new Date(), intlLocale).label}`, tone: "info" });
   };
 
-  const changeCurrency = (nextCurrency: string) => {
-    setCurrencyKey(nextCurrency);
-    setLoading(true);
-    setLoadError(null);
-  };
+  const changeCurrency = (nextCurrency: string) => setCurrencyKey(nextCurrency);
 
   const openLog = (type: LogType = "Expense", category = "Food") => {
     if (!dashboard || dashboardStale) return;
@@ -342,8 +322,7 @@ function LocalizedDashboardPage({ user, initialCurrency }: { user: AuthUser; ini
       });
       setDialogOpen(false);
       setToast({ message: t(`${logType} saved to the backend`, `${logLabel(logType)} збережено`), tone: "success", undo });
-      setLoading(true);
-      setRefreshVersion((current) => current + 1);
+      refreshData();
     } catch (error) {
       setToast({
         message: error instanceof Error ? error.message : t(`Could not save ${logType.toLowerCase()}.`, `Не вдалося зберегти: ${logLabel(logType).toLowerCase()}.`),
@@ -360,8 +339,7 @@ function LocalizedDashboardPage({ user, initialCurrency }: { user: AuthUser; ini
     try {
       await undoQuickLog(toast.undo);
       setToast({ message: t("The backend entry was undone", "Запис скасовано"), tone: "success" });
-      setLoading(true);
-      setRefreshVersion((current) => current + 1);
+      refreshData();
     } catch (error) {
       setToast({
         message: error instanceof Error ? error.message : t("Could not undo the backend entry.", "Не вдалося скасувати запис."),

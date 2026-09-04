@@ -2,12 +2,78 @@ import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { accessTokenSecondsRemaining } from "../lib/auth.ts";
+import {
+  AUTH_USER_MARKER_COOKIE_NAME,
+  browserAuthenticatedUserId,
+  clearModuleDataSnapshots,
+  MODULE_DATA_MAX_AGE_MS,
+  readModuleDataSnapshot,
+  writeModuleDataSnapshot,
+} from "../lib/module-data-cache.ts";
+
 test("produces a standard Next.js build", async () => {
   await Promise.all([
     access(new URL("../.next/BUILD_ID", import.meta.url)),
     access(new URL("../.next/routes-manifest.json", import.meta.url)),
     access(new URL("../.next/server/app-paths-manifest.json", import.meta.url)),
   ]);
+});
+
+test("bounds repaired auth markers to the JWT expiry", () => {
+  const payload = Buffer.from(JSON.stringify({ exp: 1_030 })).toString("base64url");
+  assert.equal(accessTokenSecondsRemaining(`header.${payload}.signature`, 1_000), 30);
+  assert.equal(accessTokenSecondsRemaining(`header.${payload}.signature`, 1_031), 0);
+  assert.equal(accessTokenSecondsRemaining("not-a-jwt", 1_000), null);
+});
+
+test("keeps recent module snapshots scoped to the signed-in user", () => {
+  const hadWindow = "window" in globalThis;
+  const previousWindow = globalThis.window;
+  const hadDocument = "document" in globalThis;
+  const previousDocument = globalThis.document;
+  globalThis.window = globalThis;
+  globalThis.document = { cookie: `${AUTH_USER_MARKER_COOKIE_NAME}=user-a` };
+  globalThis.sessionStorage.clear();
+
+  try {
+    const savedAt = 1_000_000;
+    assert.equal(browserAuthenticatedUserId(), "user-a");
+    writeModuleDataSnapshot("user-a", "body", "2026-09", { weight: 80 }, savedAt);
+    globalThis.document.cookie = `${AUTH_USER_MARKER_COOKIE_NAME}=user-b`;
+    writeModuleDataSnapshot("user-b", "body", "2026-09", { weight: 70 }, savedAt);
+
+    globalThis.document.cookie = `${AUTH_USER_MARKER_COOKIE_NAME}=user-a`;
+    assert.deepEqual(
+      readModuleDataSnapshot("user-a", "body", "2026-09", savedAt),
+      { weight: 80 },
+    );
+    assert.equal(readModuleDataSnapshot("user-b", "body", "2026-09", savedAt), null);
+    assert.equal(readModuleDataSnapshot("user-a", "body", "2026-08", savedAt), null);
+
+    writeModuleDataSnapshot("user-a", "body", "2026-09", { weight: 80 }, savedAt);
+    assert.equal(
+      readModuleDataSnapshot("user-a", "body", "2026-09", savedAt + MODULE_DATA_MAX_AGE_MS + 1),
+      null,
+    );
+
+    writeModuleDataSnapshot("user-a", "body", "2026-09", { weight: 80 }, savedAt);
+    clearModuleDataSnapshots("user-a");
+    assert.equal(readModuleDataSnapshot("user-a", "body", "2026-09", savedAt), null);
+    writeModuleDataSnapshot("user-a", "body", "2026-09", { weight: 90 }, savedAt);
+    assert.equal(readModuleDataSnapshot("user-a", "body", "2026-09", savedAt), null);
+    globalThis.document.cookie = `${AUTH_USER_MARKER_COOKIE_NAME}=user-b`;
+    assert.deepEqual(
+      readModuleDataSnapshot("user-b", "body", "2026-09", savedAt),
+      { weight: 70 },
+    );
+  } finally {
+    globalThis.sessionStorage.clear();
+    if (hadWindow) globalThis.window = previousWindow;
+    else delete globalThis.window;
+    if (hadDocument) globalThis.document = previousDocument;
+    else delete globalThis.document;
+  }
 });
 
 test("keeps the Better Tracker dashboard and metadata intact", async () => {
@@ -80,11 +146,15 @@ test("ships secure multi-user authentication", async () => {
   assert.match(loginPage, /getAuthenticatedUser/);
   assert.match(registerPage, /getAuthenticatedUser/);
   assert.match(loginRoute, /\/api\/v1\/auth\/login/);
+  assert.match(loginRoute, /payload\.user_id/);
   assert.match(registerRoute, /\/api\/v1\/auth\/register/);
   assert.match(registerRoute, /setSessionCookie/);
   assert.match(logoutRoute, /clearSessionCookie/);
   assert.match(accountSummary, /\/api\/auth\/logout/);
+  assert.match(accountSummary, /announceAuthenticatedUser\(null\)/);
+  assert.match(accountSummary, /window\.location\.replace\("\/login"\)/);
   assert.match(sessionCookie, /httpOnly: true/);
+  assert.match(sessionCookie, /AUTH_USER_MARKER_COOKIE_NAME/);
   assert.match(sessionCookie, /sameSite: "lax"/);
   assert.match(serverAuth, /\/api\/v1\/auth\/me/);
   assert.match(backendProxy, /Authorization|authorization/);
@@ -149,7 +219,7 @@ test("ships routed modules backed by FastAPI CRUD", async () => {
     assert.match(shell, new RegExp(`href: "${href}"`));
   }
   assert.match(moduleApi, /\/finance\/transactions/);
-  assert.match(moduleApi, /\/wealth\/accounts/);
+  assert.match(moduleApi, /\/money\/workspace/);
   assert.match(moduleApi, /\/workouts\?\$\{range\}/);
   assert.match(moduleApi, /\/health\/nutrition/);
   assert.match(moduleApi, /\/health\/weights/);
@@ -247,7 +317,12 @@ test("ships the Money overview and source management views", async () => {
   assert.match(money, /MonthPickerInput/);
   assert.match(money, /\[1, 3, 6, 12\]/);
   assert.match(moduleApi, /fetchMoneyOverview/);
-  assert.match(moduleApi, /Promise\.all\(moneyMonthRange/);
+  assert.match(moduleApi, /\/money\/summaries/);
+  const initialMoneyLoad = moduleApi.slice(
+    moduleApi.indexOf("export async function fetchMoneyData"),
+    moduleApi.indexOf("export async function fetchMoneyTrackingSummary"),
+  );
+  assert.doesNotMatch(initialMoneyLoad, /Promise\.all|\/contributions/);
   assert.match(moduleApi, /include_ignored: includeIgnored/);
   assert.match(money, /aria-expanded=\{group\.expanded\}/);
   assert.match(money, /slice\(0, 3\)/);
@@ -277,8 +352,14 @@ test("keeps dashboard summaries comparable, navigable, and readable", async () =
   assert.match(nutrition, /const chartMaximum = Math\.max/);
   assert.doesNotMatch(nutrition, /const maximum = Math\.max\(log\.calories/);
   assert.match(body, /body-chart-dates/);
-  assert.match(moduleData, /data:\s*result\.data,/);
+  assert.match(moduleData, /data:\s*visible\s*\?\s*result\.data\s*:\s*null/);
   assert.doesNotMatch(moduleData, /data:\s*result\.dataKey\s*===\s*periodKey/);
+  assert.match(moduleData, /scopeKey = `\$\{userId\}:\$\{slot\}`/);
+  const optimisticUpdate = moduleData.slice(
+    moduleData.indexOf("const updateData"),
+    moduleData.indexOf("const visible"),
+  );
+  assert.doesNotMatch(optimisticUpdate, /writeModuleDataSnapshot/);
   assert.match(money, /hasMonthlyBudget \? money/);
   assert.match(styles, /\.skip-link/);
   assert.match(styles, /min-height: 44px/);
@@ -355,6 +436,10 @@ test("localizes the UI per user in Ukrainian", async () => {
 
   assert.match(auth, /locale: "en" \| "uk"/);
   assert.match(i18n, /\/api\/auth\/preferences/);
+  assert.match(i18n, /\/api\/auth\/session/);
+  assert.match(i18n, /addEventListener\("focus", checkMarker\)/);
+  assert.match(i18n, /browserAuthenticatedUserId/);
+  assert.match(i18n, /visibilitychange/);
   assert.match(preferences, /\/api\/v1\/auth\/me/);
   assert.match(shell, /Фінанси/);
   assert.match(dashboard, /Усе ваше життя — одним поглядом/);

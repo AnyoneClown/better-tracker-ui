@@ -16,6 +16,7 @@ type AccessTokenResponse = {
   access_token: string;
   token_type: "bearer";
   expires_in: number;
+  user_id: string;
 };
 
 function isCredentials(value: unknown): value is Credentials {
@@ -34,6 +35,8 @@ function isAccessTokenResponse(value: unknown): value is AccessTokenResponse {
     && typeof candidate.expires_in === "number"
     && Number.isFinite(candidate.expires_in)
     && candidate.expires_in > 0
+    && typeof candidate.user_id === "string"
+    && candidate.user_id.length > 0
   );
 }
 
@@ -118,6 +121,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   const response = json({ user: registeredUser }, 201);
-  setSessionCookie(response, tokenPayload.access_token, tokenPayload.expires_in);
+  setSessionCookie(
+    response,
+    tokenPayload.access_token,
+    tokenPayload.expires_in,
+    tokenPayload.user_id,
+  );
   return response;
 }

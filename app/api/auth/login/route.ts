@@ -10,6 +10,7 @@ type AccessTokenResponse = {
   access_token: string;
   token_type: "bearer";
   expires_in: number;
+  user_id: string;
 };
 
 function isAccessTokenResponse(value: unknown): value is AccessTokenResponse {
@@ -22,6 +23,8 @@ function isAccessTokenResponse(value: unknown): value is AccessTokenResponse {
     && typeof candidate.expires_in === "number"
     && Number.isFinite(candidate.expires_in)
     && candidate.expires_in > 0
+    && typeof candidate.user_id === "string"
+    && candidate.user_id.length > 0
   );
 }
 
@@ -80,6 +83,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   const response = json({ authenticated: true }, 200);
-  setSessionCookie(response, payload.access_token, payload.expires_in);
+  setSessionCookie(response, payload.access_token, payload.expires_in, payload.user_id);
   return response;
 }

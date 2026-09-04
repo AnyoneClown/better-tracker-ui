@@ -59,7 +59,9 @@ The frontend supports the backend's multi-user authentication flow:
 - `/api/auth/google` runs the Google authorization-code flow with state and S256
   PKCE, then stores the resulting Better Tracker token in the same session cookie.
 - The Next.js auth route stores that token in an `HttpOnly`, same-site cookie;
-  browser JavaScript never receives or persists the bearer token.
+  browser JavaScript never receives or persists the bearer token. A separate,
+  non-secret user-ID marker only prevents tab-local cached data from crossing
+  accounts; it is never used for authorization.
 - State-changing proxy and authentication requests reject foreign browser
   origins, providing an additional CSRF boundary around the session cookie.
 - Server-rendered dashboard routes validate the session with

@@ -60,6 +60,10 @@ import {
 } from "@/lib/module-api";
 import { formatMoney, getPeriod } from "@/lib/tracker-api";
 import { useLocale } from "@/lib/i18n";
+import {
+  browserAuthenticatedUserId,
+  clearModuleDataSnapshots,
+} from "@/lib/module-data-cache";
 import { moneyMonthRange, summarizeMoney } from "@/lib/money-overview";
 
 type Toast = { message: string; tone: "success" | "error" };
@@ -211,7 +215,7 @@ export default function MoneyPage({
   initialCategory?: string;
   initialTab?: MoneyTab;
 }) {
-  const { locale, intlLocale, t } = useLocale();
+  const { userId, locale, intlLocale, t } = useLocale();
   const [periodKey, setPeriodKey] = useState(initialPeriodKey);
   const [selectedCurrency, setSelectedCurrency] = useState(initialCurrency);
   const [categoryFilter, setCategoryFilter] = useState(initialCategory);
@@ -236,7 +240,7 @@ export default function MoneyPage({
   }, []);
   const moneyCategoryFilter = tab === "cashflow" ? categoryFilter : undefined;
   const moneyViewKey = `${periodKey}|${selectedCurrency}|${includeIgnored}|${encodeURIComponent(moneyCategoryFilter ?? "")}`;
-  const { data, loading, stale, error, refresh, updateData } = useModuleData(moneyViewKey, moneyLoader);
+  const { data, loading, stale, error, refresh, updateData } = useModuleData("money", moneyViewKey, moneyLoader);
   const overviewLoader = useCallback((requestKey: string, signal?: AbortSignal) => {
     const [startMonth, endMonth, requestedCurrency] = requestKey.split("|");
     return fetchMoneyOverview(startMonth, endMonth, requestedCurrency, signal);
@@ -248,7 +252,7 @@ export default function MoneyPage({
     stale: overviewStale,
     error: overviewError,
     refresh: refreshOverview,
-  } = useModuleData<FinanceSummary[]>(overviewViewKey, overviewLoader);
+  } = useModuleData<FinanceSummary[]>("money-overview", overviewViewKey, overviewLoader);
   const categoryTransactionLoader = useCallback((requestKey: string, signal?: AbortSignal) => {
     const [startMonth, endMonth, requestedCurrency, requestedCategory] = requestKey.split("|");
     return fetchMoneyCategoryTransactions(
@@ -266,7 +270,7 @@ export default function MoneyPage({
     stale: categoryTransactionsStale,
     error: categoryTransactionsError,
     refresh: refreshCategoryTransactions,
-  } = useModuleData<FinancialTransaction[]>(categoryTransactionKey, categoryTransactionLoader);
+  } = useModuleData<FinancialTransaction[]>("money-category", categoryTransactionKey, categoryTransactionLoader);
   const [dialog, setDialog] = useState<MoneyDialog | null>(null);
   const [saving, setSaving] = useState(false);
   const [integrationBusy, setIntegrationBusy] = useState(false);
@@ -311,6 +315,12 @@ export default function MoneyPage({
 
     const pollConnections = async () => {
       if (requestRunning) return;
+      if (browserAuthenticatedUserId() !== userId) {
+        controller.abort();
+        clearModuleDataSnapshots(userId);
+        window.location.reload();
+        return;
+      }
       requestRunning = true;
       try {
         const monobank = await fetchMonobankConnection(controller.signal);
@@ -345,7 +355,7 @@ export default function MoneyPage({
       window.removeEventListener("focus", pollAfterResume);
       document.removeEventListener("visibilitychange", pollAfterResume);
     };
-  }, [shouldPollMonobank, updateData]);
+  }, [shouldPollMonobank, updateData, userId]);
 
   useEffect(() => {
     const currentStatus = data?.monobank.sync_status ?? null;

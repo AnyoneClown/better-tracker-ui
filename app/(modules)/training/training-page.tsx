@@ -54,7 +54,7 @@ function formatDuration(minutes: number, ukrainian: boolean): string {
 export default function TrainingPage({ initialPeriodKey, latestPeriodKey }: { initialPeriodKey: string; latestPeriodKey: string }) {
   const { locale, intlLocale, t } = useLocale();
   const [periodKey, setPeriodKey] = useState(initialPeriodKey);
-  const { data, loading, stale, error, refresh } = useModuleData(periodKey, fetchTrainingData);
+  const { data, loading, stale, error, refresh } = useModuleData("training", periodKey, fetchTrainingData);
   const [editing, setEditing] = useState<Workout | "new" | null>(null);
   const [setDrafts, setSetDrafts] = useState<SetDraft[]>([]);
   const [saving, setSaving] = useState(false);

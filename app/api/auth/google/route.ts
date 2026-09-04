@@ -22,6 +22,7 @@ type AccessTokenResponse = {
   access_token: string;
   token_type: "bearer";
   expires_in: number;
+  user_id: string;
 };
 
 function isAccessTokenResponse(value: unknown): value is AccessTokenResponse {
@@ -33,6 +34,8 @@ function isAccessTokenResponse(value: unknown): value is AccessTokenResponse {
     && candidate.token_type === "bearer"
     && typeof candidate.expires_in === "number"
     && candidate.expires_in > 0
+    && typeof candidate.user_id === "string"
+    && candidate.user_id.length > 0
   );
 }
 
@@ -183,7 +186,7 @@ async function finishGoogleOAuth(request: NextRequest): Promise<NextResponse> {
 
   const response = NextResponse.redirect(new URL(flow.nextPath, request.url));
   response.headers.set("Cache-Control", "no-store");
-  setSessionCookie(response, payload.access_token, payload.expires_in);
+  setSessionCookie(response, payload.access_token, payload.expires_in, payload.user_id);
   clearOAuthCookie(response);
   return response;
 }

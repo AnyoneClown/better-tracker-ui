@@ -4,7 +4,6 @@ import {
   Dumbbell,
   LayoutDashboard,
   Scale,
-  ShieldCheck,
   Utensils,
   WalletCards,
 } from "lucide-react";
@@ -69,15 +68,6 @@ function LocalizedModuleShell({ children, user }: { children: ReactNode; user: A
           <p className="nav-eyebrow">{t("Workspace", "Робочий простір")}</p>
           <Navigation />
         </nav>
-
-        <div className="sidebar-focus module-focus">
-          <div className="focus-heading">
-            <span><ShieldCheck size={16} /> {t("Backend connected", "Сервер підключено")}</span>
-            <span className="focus-percent">{t("Live", "Онлайн")}</span>
-          </div>
-          <div className="focus-bar"><span style={{ width: "100%" }} /></div>
-          <div className="focus-meta"><span>{t("Real records", "Реальні дані")}</span><span>{t("Synced", "Синхронізовано")}</span></div>
-        </div>
 
         <AccountSummary user={user} />
       </aside>

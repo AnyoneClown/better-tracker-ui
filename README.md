@@ -18,6 +18,8 @@ npm run dev
 development. Set it in `.env.local` when the API uses another address, then open
 `http://localhost:43127`. The development server listens on all interfaces, so
 this Raspberry Pi is also available at <http://192.168.0.103:43127>.
+Set `BETTER_TRACKER_APP_URL` to the public frontend origin when it differs from
+the local default; it is used for social metadata URLs.
 
 To enable Google sign-in, create a Google OAuth 2.0 Web application and add
 `http://localhost:43127/api/auth/google` as an authorized redirect URI. Set its
@@ -109,28 +111,6 @@ npm run lint
 npm run typecheck
 npm test
 ```
-
-## Deploy to Vercel
-
-This is a standard Next.js App Router project. The production project is
-`better-tracker` and is available at https://better-tracker-sigma.vercel.app.
-Configure a publicly reachable backend URL for Production, Preview, and
-Development before deploying:
-
-```bash
-vercel link
-vercel env add BETTER_TRACKER_API_URL production preview development
-vercel --prod
-```
-
-Also add `https://better-tracker-sigma.vercel.app/api/auth/google` to the Google
-OAuth client's authorized redirect URIs. Each preview domain needs its own exact
-redirect URI if Google sign-in should work there.
-
-The value should be the backend origin, for example
-`https://api.example.com`, without `/api/v1` at the end. Vercel cannot reach a
-backend that only listens on `localhost`. Use an HTTPS origin in production,
-especially when bank connections are enabled.
 
 ## Current data flow
 

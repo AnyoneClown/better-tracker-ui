@@ -10,7 +10,7 @@ test("produces a standard Next.js build", async () => {
   ]);
 });
 
-test("keeps the Better Tracker dashboard and Vercel metadata intact", async () => {
+test("keeps the Better Tracker dashboard and metadata intact", async () => {
   const [page, entryPage, layout, packageJson, favicon, apiClient, proxyRoute, backend] = await Promise.all([
     readFile(new URL("../app/dashboard-page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
@@ -35,7 +35,7 @@ test("keeps the Better Tracker dashboard and Vercel metadata intact", async () =
   assert.match(proxyRoute, /AUTH_COOKIE_NAME/);
   assert.match(backend, /BETTER_TRACKER_API_URL/);
   assert.doesNotMatch(page, /localStorage|monthPresets|initialActivities/);
-  assert.match(layout, /VERCEL_URL/);
+  assert.match(layout, /BETTER_TRACKER_APP_URL/);
   assert.match(layout, /Better Tracker — Усе життя одним поглядом/);
   assert.match(packageJson, /"name": "better-tracker"/);
   assert.match(packageJson, /"build": "next build"/);

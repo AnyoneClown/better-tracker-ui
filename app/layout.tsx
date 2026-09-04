@@ -12,8 +12,7 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const deploymentHost = process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL;
-const metadataBase = new URL(deploymentHost ? `https://${deploymentHost}` : "http://localhost:43127");
+const metadataBase = new URL(process.env.BETTER_TRACKER_APP_URL ?? "http://localhost:43127");
 const title = "Better Tracker — Усе життя одним поглядом";
 const description = "Особиста панель для фінансів, тренувань, харчування, цілей тіла та щоденного прогресу.";
 

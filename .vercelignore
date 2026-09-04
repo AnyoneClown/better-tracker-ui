@@ -1,7 +1,0 @@
-.openai
-.vinext
-.wrangler
-build
-dist
-worker
-*.tsbuildinfo

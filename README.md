@@ -16,7 +16,8 @@ npm run dev
 
 `BETTER_TRACKER_API_URL` defaults to `http://127.0.0.1:8000` during local
 development. Set it in `.env.local` when the API uses another address, then open
-`http://localhost:43127`.
+`http://localhost:43127`. The development server listens on all interfaces, so
+this Raspberry Pi is also available at <http://192.168.0.103:43127>.
 
 To enable Google sign-in, create a Google OAuth 2.0 Web application and add
 `http://localhost:43127/api/auth/google` as an authorized redirect URI. Set its
@@ -26,6 +27,26 @@ client ID and secret on the backend as `GOOGLE_OAUTH_CLIENT_ID` and
 The browser calls the same-origin `/api/backend/*` route. Next.js forwards those
 requests to FastAPI on the server, so the API URL is not included in the browser
 bundle and the production frontend does not require a CORS exception.
+
+### Persistent Raspberry Pi service
+
+After starting the backend's production Compose stack, build and run the
+frontend as a restart-enabled container:
+
+```bash
+docker compose up -d --build --wait
+```
+
+The frontend joins the backend's private Docker network, while only port
+`43127` is published to the LAN. FastAPI and CockroachDB remain private.
+`.env.local` sets `BETTER_TRACKER_COOKIE_SECURE=false` because the Pi is served
+over plain HTTP; production HTTPS deployments should omit that override or set
+it to `true`.
+
+Google rejects OAuth callbacks that use a raw LAN IP over HTTP. Google sign-in
+on the Pi therefore requires either an SSH tunnel opened as `localhost` or a
+real HTTPS hostname whose exact callback is registered in the Google OAuth
+client. Email/password sign-in works directly at the LAN address.
 
 ## Authentication
 

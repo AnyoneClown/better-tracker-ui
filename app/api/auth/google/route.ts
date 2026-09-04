@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { safeReturnPath } from "@/lib/auth";
 import { backendUrl } from "@/lib/backend";
+import { secureCookiesEnabled } from "@/lib/cookie-security";
 import { setSessionCookie } from "@/lib/session-cookie";
 
 export const dynamic = "force-dynamic";
@@ -63,7 +64,7 @@ function clearOAuthCookie(response: NextResponse): void {
     name: OAUTH_COOKIE,
     value: "",
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: secureCookiesEnabled(),
     sameSite: "lax",
     path: "/api/auth/google",
     maxAge: 0,
@@ -138,7 +139,7 @@ async function startGoogleOAuth(request: NextRequest): Promise<NextResponse> {
     name: OAUTH_COOKIE,
     value: Buffer.from(JSON.stringify({ state, verifier, nextPath, mode })).toString("base64url"),
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: secureCookiesEnabled(),
     sameSite: "lax",
     path: "/api/auth/google",
     maxAge: 10 * 60,

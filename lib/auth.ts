@@ -4,6 +4,7 @@ export type AuthUser = {
   id: string;
   email: string;
   is_active: boolean;
+  locale: "en" | "uk";
   created_at: string;
   updated_at: string;
 };
@@ -16,12 +17,22 @@ export function apiProblemMessage(
   payload: ApiProblem | null,
   fallback: string,
 ): string {
-  if (typeof payload?.detail === "string") return payload.detail;
+  if (typeof payload?.detail === "string") return ({
+    "A user with this email already exists": "Користувач із такою електронною адресою вже існує.",
+    "Could not validate credentials": "Неправильна електронна адреса або пароль.",
+    "Google sign-in is not configured": "Вхід через Google ще не налаштовано.",
+    "Google authentication failed": "Не вдалося автентифікуватися через Google.",
+    "Google authentication is unavailable": "Автентифікація через Google зараз недоступна.",
+  } as Record<string, string>)[payload.detail] ?? payload.detail;
   if (Array.isArray(payload?.detail)) {
     const messages = payload.detail
       .map((item) => item.msg?.replace(/^Value error,\s*/i, ""))
       .filter((item): item is string => Boolean(item));
-    if (messages.length > 0) return messages.join("; ");
+    if (messages.length > 0) return messages.map((message) => (
+      message.startsWith("password must contain")
+        ? "Пароль не відповідає вимогам."
+        : message
+    )).join("; ");
   }
   return fallback;
 }
@@ -33,6 +44,7 @@ export function isAuthUser(value: unknown): value is AuthUser {
     typeof candidate.id === "string"
     && typeof candidate.email === "string"
     && candidate.is_active === true
+    && (candidate.locale === "en" || candidate.locale === "uk")
     && typeof candidate.created_at === "string"
     && typeof candidate.updated_at === "string"
   );
@@ -63,11 +75,11 @@ export function safeReturnPath(value: unknown): string {
 
 export function googleAuthErrorMessage(value: unknown): string | undefined {
   const reason = Array.isArray(value) ? value[0] : value;
-  if (reason === "cancelled") return "Google sign-in was cancelled.";
-  if (reason === "state") return "Google sign-in expired. Please try again.";
-  if (reason === "config") return "Google sign-in is not configured yet.";
+  if (reason === "cancelled") return "Вхід через Google скасовано.";
+  if (reason === "state") return "Спроба входу через Google застаріла. Спробуйте ще раз.";
+  if (reason === "config") return "Вхід через Google ще не налаштовано.";
   if (reason === "exchange" || reason === "unavailable") {
-    return "Could not sign in with Google. Please try again.";
+    return "Не вдалося увійти через Google. Спробуйте ще раз.";
   }
   return undefined;
 }

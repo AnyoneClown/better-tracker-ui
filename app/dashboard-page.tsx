@@ -4,7 +4,6 @@ import {
   ArrowDownRight,
   ArrowRight,
   ArrowUpRight,
-  Bell,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -13,7 +12,6 @@ import {
   Dumbbell,
   Flame,
   LayoutDashboard,
-  MoreHorizontal,
   PiggyBank,
   Plus,
   ReceiptText,
@@ -39,6 +37,7 @@ import {
 
 import { AccountSummary } from "@/components/account-summary";
 import type { AuthUser } from "@/lib/auth";
+import { LocaleProvider, useLocale } from "@/lib/i18n";
 import {
   createQuickLog,
   type Activity,
@@ -53,11 +52,11 @@ import {
 } from "@/lib/tracker-api";
 
 const navigation = [
-  { label: "Overview", icon: LayoutDashboard, href: "/" },
-  { label: "Money", icon: WalletCards, href: "/money" },
-  { label: "Training", icon: Dumbbell, href: "/training" },
-  { label: "Nutrition", icon: Utensils, href: "/nutrition" },
-  { label: "Body", icon: Scale, href: "/body" },
+  { label: "Overview", uk: "Огляд", icon: LayoutDashboard, href: "/" },
+  { label: "Money", uk: "Фінанси", icon: WalletCards, href: "/money" },
+  { label: "Training", uk: "Тренування", icon: Dumbbell, href: "/training" },
+  { label: "Nutrition", uk: "Харчування", icon: Utensils, href: "/nutrition" },
+  { label: "Body", uk: "Тіло", icon: Scale, href: "/body" },
 ];
 
 const logTypes: { label: LogType; icon: typeof ReceiptText }[] = [
@@ -75,8 +74,8 @@ type ToastState = {
   undo?: UndoAction;
 };
 
-function formatCompact(value: number, currency: string) {
-  return new Intl.NumberFormat("en-US", {
+function formatCompact(value: number, currency: string, locale: string) {
+  return new Intl.NumberFormat(locale, {
     notation: "compact",
     style: "currency",
     currency,
@@ -84,8 +83,8 @@ function formatCompact(value: number, currency: string) {
   }).format(value);
 }
 
-function formatLongDate(date: string): string {
-  return new Intl.DateTimeFormat("en-US", {
+function formatLongDate(date: string, locale: string): string {
+  return new Intl.DateTimeFormat(locale, {
     weekday: "long",
     day: "numeric",
     month: "long",
@@ -93,22 +92,24 @@ function formatLongDate(date: string): string {
   }).format(new Date(`${date}T12:00:00Z`));
 }
 
-function formatShortDate(date: string): string {
-  return new Intl.DateTimeFormat("en-US", {
+function formatShortDate(date: string, locale: string): string {
+  return new Intl.DateTimeFormat(locale, {
     day: "numeric",
     month: "short",
     timeZone: "UTC",
   }).format(new Date(`${date}T12:00:00Z`));
 }
 
-function formatDuration(minutes: number): string {
-  if (minutes < 60) return `${minutes}m`;
+function formatDuration(minutes: number, ukrainian: boolean): string {
+  if (minutes < 60) return `${minutes}${ukrainian ? "хв" : "m"}`;
   const hours = Math.floor(minutes / 60);
   const remainder = minutes % 60;
-  return remainder > 0 ? `${hours}h ${remainder}m` : `${hours}h`;
+  return remainder > 0
+    ? `${hours}${ukrainian ? "год" : "h"} ${remainder}${ukrainian ? "хв" : "m"}`
+    : `${hours}${ukrainian ? "год" : "h"}`;
 }
 
-function getWeekDays(referenceDate: string) {
+function getWeekDays(referenceDate: string, ukrainian: boolean) {
   const reference = new Date(`${referenceDate}T12:00:00Z`);
   const mondayOffset = (reference.getUTCDay() + 6) % 7;
   const monday = new Date(reference);
@@ -119,7 +120,7 @@ function getWeekDays(referenceDate: string) {
     date.setUTCDate(monday.getUTCDate() + index);
     return {
       key: date.toISOString().slice(0, 10),
-      day: ["S", "M", "T", "W", "T", "F", "S"][date.getUTCDay()],
+      day: (ukrainian ? ["Н", "П", "В", "С", "Ч", "П", "С"] : ["S", "M", "T", "W", "T", "F", "S"])[date.getUTCDay()],
       date: String(date.getUTCDate()),
     };
   });
@@ -182,23 +183,26 @@ function DashboardState({
   error: string | null;
   onRetry: () => void;
 }) {
+  const { t } = useLocale();
   return (
     <section className={`dashboard-state ${error ? "error" : "loading"}`} role={error ? "alert" : "status"}>
       <span className="state-icon">
         {error ? <X size={20} /> : <RotateCcw size={20} />}
       </span>
       <div>
-        <h2>{error ? "The backend could not be loaded" : "Loading your live data"}</h2>
-        <p>{error ?? "Fetching money, training, health, and wealth records…"}</p>
+        <h2>{error ? t("The backend could not be loaded", "Не вдалося завантажити дані із сервера") : t("Loading your live data", "Завантажуємо ваші дані")}</h2>
+        <p>{error ?? t("Fetching money, training, health, and wealth records…", "Отримуємо дані про фінанси, тренування, здоров’я та активи…")}</p>
       </div>
-      {error && <button onClick={onRetry}>Try again</button>}
+      {error && <button onClick={onRetry}>{t("Try again", "Спробувати ще раз")}</button>}
     </section>
   );
 }
 
-export default function DashboardPage({ user }: { user: AuthUser }) {
-  const periodOptions = useMemo(() => getPeriodOptions(), []);
+function LocalizedDashboardPage({ user, initialCurrency }: { user: AuthUser; initialCurrency: string }) {
+  const { locale, intlLocale, t } = useLocale();
+  const periodOptions = useMemo(() => getPeriodOptions(12, new Date(), intlLocale), [intlLocale]);
   const [periodKey, setPeriodKey] = useState(() => getPeriodOptions()[0].key);
+  const [currencyKey, setCurrencyKey] = useState(initialCurrency);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [logType, setLogType] = useState<LogType>("Expense");
@@ -212,26 +216,31 @@ export default function DashboardPage({ user }: { user: AuthUser }) {
   const dialogRef = useRef<HTMLElement | null>(null);
   const lastFocusedRef = useRef<HTMLElement | null>(null);
 
-  const selectedPeriod = dashboard?.period ?? getPeriod(periodKey);
-  const currency = dashboard?.currency ?? "USD";
-  const money = (value: number) => formatMoney(value, currency);
+  const rawPeriod = dashboard?.period ?? getPeriod(periodKey);
+  const selectedPeriod = { ...rawPeriod, label: getPeriod(rawPeriod.key, new Date(), intlLocale).label };
+  const currency = dashboard?.currency ?? currencyKey;
+  const dashboardStale = dashboard !== null && (dashboard.period.key !== periodKey || dashboard.currency !== currencyKey);
+  const currencies = Array.from(new Set([currencyKey, ...(dashboard?.currencies ?? [])]));
+  const money = (value: number) => formatMoney(value, currency, intlLocale);
+  const logLabel = (type: LogType) => t(type === "Meal" ? "Daily nutrition" : type, ({ Expense: "Витрата", Income: "Дохід", Workout: "Тренування", Meal: "Харчування за день", Weight: "Вага", Savings: "Заощадження" })[type]);
+  const areaLabel = (area: string) => ({ Money: "Фінанси", Training: "Тренування", Nutrition: "Харчування", Body: "Тіло", Savings: "Заощадження" })[area] ?? area;
 
   useEffect(() => {
     const controller = new AbortController();
-    void fetchDashboard(periodKey, controller.signal)
+    void fetchDashboard(periodKey, controller.signal, intlLocale, currencyKey)
       .then((data) => {
         setDashboard(data);
         setLoadError(null);
       })
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
-        setLoadError(error instanceof Error ? error.message : "The backend request failed.");
+        setLoadError(error instanceof Error ? error.message : t("The backend request failed.", "Помилка запиту до сервера."));
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [periodKey, refreshVersion]);
+  }, [currencyKey, intlLocale, periodKey, refreshVersion, t]);
 
   useEffect(() => {
     if (!dialogOpen) return;
@@ -284,23 +293,25 @@ export default function DashboardPage({ user }: { user: AuthUser }) {
 
   const changePeriod = (nextPeriod: string) => {
     setPeriodKey(nextPeriod);
-    setDashboard(null);
     setLoading(true);
     setLoadError(null);
-    setToast({ message: `Loading ${getPeriod(nextPeriod).label}`, tone: "info" });
+    setToast({ message: `${t("Loading", "Завантажуємо")} ${getPeriod(nextPeriod, new Date(), intlLocale).label}`, tone: "info" });
+  };
+
+  const changeCurrency = (nextCurrency: string) => {
+    setCurrencyKey(nextCurrency);
+    setLoading(true);
+    setLoadError(null);
   };
 
   const openLog = (type: LogType = "Expense", category = "Food") => {
+    if (!dashboard || dashboardStale) return;
     lastFocusedRef.current = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
     setLogType(type);
     setDefaultCategory(category);
     setDialogOpen(true);
-  };
-
-  const showNotice = (message: string) => {
-    setToast({ message, tone: "info" });
   };
 
   const handleLog = async (event: FormEvent<HTMLFormElement>) => {
@@ -327,15 +338,15 @@ export default function DashboardPage({ user }: { user: AuthUser }) {
         goalId: String(form.get("goalId") || "") || undefined,
         newGoalName: String(form.get("newGoalName") || "").trim() || undefined,
         newGoalTarget: optionalNumber("newGoalTarget"),
-        currency,
+        currency: currencyKey,
       });
       setDialogOpen(false);
-      setToast({ message: `${logType} saved to the backend`, tone: "success", undo });
+      setToast({ message: t(`${logType} saved to the backend`, `${logLabel(logType)} збережено`), tone: "success", undo });
       setLoading(true);
       setRefreshVersion((current) => current + 1);
     } catch (error) {
       setToast({
-        message: error instanceof Error ? error.message : `Could not save ${logType.toLowerCase()}.`,
+        message: error instanceof Error ? error.message : t(`Could not save ${logType.toLowerCase()}.`, `Не вдалося зберегти: ${logLabel(logType).toLowerCase()}.`),
         tone: "error",
       });
     } finally {
@@ -348,12 +359,12 @@ export default function DashboardPage({ user }: { user: AuthUser }) {
     setUndoing(true);
     try {
       await undoQuickLog(toast.undo);
-      setToast({ message: "The backend entry was undone", tone: "success" });
+      setToast({ message: t("The backend entry was undone", "Запис скасовано"), tone: "success" });
       setLoading(true);
       setRefreshVersion((current) => current + 1);
     } catch (error) {
       setToast({
-        message: error instanceof Error ? error.message : "Could not undo the backend entry.",
+        message: error instanceof Error ? error.message : t("Could not undo the backend entry.", "Не вдалося скасувати запис."),
         tone: "error",
       });
     } finally {
@@ -376,9 +387,8 @@ export default function DashboardPage({ user }: { user: AuthUser }) {
     "Other",
   ]));
 
-  const weekDays = getWeekDays(selectedPeriod.referenceDate);
+  const weekDays = getWeekDays(selectedPeriod.referenceDate, locale === "uk");
   const completedWorkoutDates = new Set(dashboard?.training.workoutDates ?? []);
-  const remainingWorkouts = Math.max(4 - (dashboard?.training.weekCount ?? 0), 0);
   const weightChart = buildWeightChart(dashboard?.health.weights ?? []);
   const calorieTarget = dashboard?.health.calorieTarget ?? null;
   const calories = dashboard?.health.calories ?? 0;
@@ -399,39 +409,41 @@ export default function DashboardPage({ user }: { user: AuthUser }) {
 
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#main-content">{t("Skip to dashboard", "Перейти до панелі")}</a>
       <aside className="sidebar">
-        <Link className="brand" href="/" aria-label="Better Tracker home">
+        <Link className="brand" href="/" aria-label={t("Better Tracker home", "Головна Better Tracker")}>
           <span className="brand-mark"><BrandMark /></span>
           <span className="brand-wordmark">BETTER TRACKER</span>
         </Link>
 
-        <nav className="sidebar-nav" aria-label="Primary navigation">
-          <p className="nav-eyebrow">Workspace</p>
-          {navigation.map(({ label, icon: Icon, href }) => (
+        <nav className="sidebar-nav" aria-label={t("Primary navigation", "Основна навігація")}>
+          <p className="nav-eyebrow">{t("Workspace", "Робочий простір")}</p>
+          {navigation.map(({ label, uk, icon: Icon, href }) => (
             <Link
-              className={label === "Overview" ? "nav-item active" : "nav-item"}
+              className={href === "/" ? "nav-item active" : "nav-item"}
               key={label}
               href={href}
-              aria-label={label}
-              aria-current={label === "Overview" ? "page" : undefined}
+              aria-label={t(label, uk)}
+              title={t(label, uk)}
+              aria-current={href === "/" ? "page" : undefined}
             >
               <Icon size={19} strokeWidth={1.9} />
-              <span>{label}</span>
-              {label === "Overview" && <span className="nav-dot" />}
+              <span>{t(label, uk)}</span>
+              {href === "/" && <span className="nav-dot" />}
             </Link>
           ))}
         </nav>
 
         <div className="sidebar-focus">
           <div className="focus-heading">
-            <span><Target size={16} /> {selectedPeriod.label.split(" ")[0]} budget</span>
+            <span><Target size={16} /> {selectedPeriod.label.split(" ")[0]} {t("budget", "бюджет")}</span>
             <span className="focus-percent">{focusBudget > 0 ? `${focusPercent}%` : "—"}</span>
           </div>
-          <p>{focusBudget > 0 ? "Keep monthly spending inside your plan." : "Add category budgets to see your monthly plan."}</p>
+          <p>{focusBudget > 0 ? t("Keep monthly spending inside your plan.", "Дотримуйтеся місячного плану витрат.") : t("Add category budgets to see your monthly plan.", "Додайте бюджети категорій, щоб побачити місячний план.")}</p>
           <div className="focus-bar"><span style={{ width: `${focusPercent}%` }} /></div>
           <div className="focus-meta">
-            <span>{money(focusSpent)} spent</span>
-            <span>{focusBudget > 0 ? money(focusBudget) : "No budget"}</span>
+            <span>{money(focusSpent)} {t("spent", "витрачено")}</span>
+            <span>{focusBudget > 0 ? money(focusBudget) : t("No budget", "Без бюджету")}</span>
           </div>
         </div>
 
@@ -439,107 +451,107 @@ export default function DashboardPage({ user }: { user: AuthUser }) {
       </aside>
 
       <header className="mobile-header">
-        <Link className="brand" href="/" aria-label="Better Tracker home">
+        <Link className="brand" href="/" aria-label={t("Better Tracker home", "Головна Better Tracker")}>
           <span className="brand-mark"><BrandMark /></span>
           <span className="brand-wordmark">BETTER TRACKER</span>
         </Link>
         <div className="mobile-header-actions">
-          <button className="icon-button" aria-label="Notifications" onClick={() => showNotice("No notification service is connected")}>
-            <Bell size={19} />
-          </button>
           <AccountSummary user={user} compact />
         </div>
       </header>
 
-      <main className="main-content" id="overview" aria-busy={loading}>
+      <main className="main-content" id="main-content" aria-busy={loading}>
         <header className="dashboard-header">
           <div>
             <div className="date-line">
               <CalendarDays size={15} />
-              {selectedPeriod.isCurrent ? formatLongDate(selectedPeriod.referenceDate) : `${selectedPeriod.label} review`}
+              {selectedPeriod.isCurrent ? formatLongDate(selectedPeriod.referenceDate, intlLocale) : `${t("Review", "Огляд")}: ${selectedPeriod.label}`}
             </div>
-            <h1>Your life, in one view.</h1>
+            <h1>{t("Your life, in one view.", "Усе ваше життя — одним поглядом.")}</h1>
             <p>{dashboard
-              ? `Live backend data across ${dashboard.coverage.tracked.length} of 5 tracking areas.`
-              : "Connecting to your Better Tracker backend."}</p>
+              ? t(`Live backend data across ${dashboard.coverage.tracked.length} of 5 tracking areas.`, `Актуальні дані у ${dashboard.coverage.tracked.length} із 5 сфер.`)
+              : t("Connecting to your Better Tracker backend.", "Підключаємося до сервера Better Tracker.")}</p>
           </div>
           <div className="header-actions">
+            <label className="currency-picker dashboard-currency-picker">
+              <span>{t("Currency", "Валюта")}</span>
+              <select value={currencyKey} onChange={(event) => changeCurrency(event.target.value)} aria-label={t("Select dashboard currency", "Виберіть валюту панелі")}>
+                {currencies.map((item) => <option value={item} key={item}>{item}</option>)}
+              </select>
+            </label>
             <label className="month-picker">
-              <span className="sr-only">Select month</span>
+              <span className="sr-only">{t("Select month", "Виберіть місяць")}</span>
               <select value={periodKey} onChange={(event) => changePeriod(event.target.value)}>
                 {periodOptions.map((period) => <option value={period.key} key={period.key}>{period.label}</option>)}
               </select>
               <ChevronDown size={15} aria-hidden="true" />
             </label>
-            <button className="icon-button desktop-only" aria-label="Notifications" onClick={() => showNotice("No notification service is connected")}>
-              <Bell size={19} />
-            </button>
-            <button className="quick-log-button" onClick={() => openLog()}><Plus size={18} /> Quick log</button>
+            <button className="quick-log-button" onClick={() => openLog()} disabled={!dashboard || dashboardStale}><Plus size={18} /> {t("Quick log", "Швидкий запис")}</button>
           </div>
         </header>
 
         {loadError && dashboard && (
           <div className="data-banner error" role="alert">
-            <span>{loadError}</span><button onClick={refreshData}>Retry</button>
+            <span>{loadError}</span><button onClick={refreshData}>{t("Retry", "Повторити")}</button>
           </div>
         )}
         {loading && dashboard && (
-          <div className="data-banner loading" role="status"><RotateCcw size={14} className="spin" /> Refreshing backend data…</div>
+          <div className="data-banner loading" role="status"><RotateCcw size={14} className="spin" /> {t("Refreshing backend data…", "Оновлюємо дані…")}</div>
         )}
 
         {!dashboard ? (
           <DashboardState error={loadError} onRetry={refreshData} />
         ) : (
-          <>
-            <section className="today-strip" aria-label="Reference day at a glance">
+          <div className={`refresh-surface ${loading || dashboardStale ? "is-refreshing" : ""}`} aria-busy={loading}>
+            <section className="today-strip" aria-label={t("Reference day at a glance", "Підсумок за вибраний день")}>
               <article className="today-item">
                 <span className="today-icon calories"><Flame size={18} /></span>
                 <span>
-                  <small>{caloriesLeft === null ? "Calories logged" : "Calories left"}</small>
-                  <strong>{caloriesLeft === null ? calories.toLocaleString() : caloriesLeft.toLocaleString()} kcal</strong>
+                  <small>{caloriesLeft === null ? t("Calories logged", "Записано калорій") : t("Calories left", "Залишилося калорій")}</small>
+                  <strong>{(caloriesLeft === null ? calories : caloriesLeft).toLocaleString(intlLocale)} {t("kcal", "ккал")}</strong>
                 </span>
                 <span className="tiny-progress"><span style={{ width: `${calorieTarget ? Math.min((calories / calorieTarget) * 100, 100) : calories > 0 ? 100 : 0}%` }} /></span>
               </article>
               <article className="today-item">
                 <span className="today-icon workout"><Dumbbell size={18} /></span>
-                <span><small>Workouts this week</small><strong>{dashboard.training.weekCount} logged</strong></span>
-                <button className="mini-action" onClick={() => openLog("Workout")} aria-label="Log workout"><Plus size={17} /></button>
+                <span><small>{t("Workouts this week", "Тренувань цього тижня")}</small><strong>{dashboard.training.weekCount} {t("logged", "записано")}</strong></span>
+                <button className="mini-action" onClick={() => openLog("Workout")} aria-label={t("Log workout", "Записати тренування")}><Plus size={17} /></button>
               </article>
               <article className="today-item">
                 <span className="today-icon spending"><ReceiptText size={18} /></span>
                 <span>
-                  <small>{selectedPeriod.isCurrent ? "Spent today" : "Daily average"}</small>
+                  <small>{selectedPeriod.isCurrent ? t("Spent today", "Витрачено сьогодні") : t("Daily average", "У середньому за день")}</small>
                   <strong>
                     {money(selectedPeriod.isCurrent
                       ? dashboard.finance.spentOnReferenceDate
                       : dashboard.finance.spent / Number(selectedPeriod.endDate.slice(-2)))}
                   </strong>
                 </span>
-                <button className="mini-action" onClick={() => openLog("Expense")} aria-label="Log expense"><Plus size={17} /></button>
+                <button className="mini-action" onClick={() => openLog("Expense")} aria-label={t("Log expense", "Записати витрату")}><Plus size={17} /></button>
               </article>
             </section>
 
             <section className="dashboard-grid" aria-label={`${selectedPeriod.label} overview`}>
               <article className="card net-worth-card" id="money">
                 <div className="card-heading">
-                  <div><p className="eyebrow">Net worth</p><h2>{money(dashboard.wealth.netWorth)}</h2></div>
-                  <button className="quiet-button" onClick={() => showNotice(dashboard.wealth.asOfLabel)}>Data source <ArrowUpRight size={15} /></button>
+                  <div><p className="eyebrow">{t("Net worth", "Чисті активи")}</p><h2>{money(dashboard.wealth.netWorth)}</h2></div>
+                  <Link className="quiet-button" href={{ pathname: "/money", query: { period: selectedPeriod.key, currency, view: "wealth" } }}>{t("Open wealth", "Відкрити активи")} <ArrowUpRight size={15} /></Link>
                 </div>
                 <div className={`positive-change ${dashboard.wealth.change !== null && dashboard.wealth.change < 0 ? "negative" : ""}`}>
-                  {dashboard.wealth.change !== null && dashboard.wealth.change < 0
+                  {dashboard.wealth.change !== null && (dashboard.wealth.change < 0
                     ? <ArrowDownRight size={15} />
-                    : <TrendingUp size={15} />}
+                    : <TrendingUp size={15} />)}
                   {dashboard.wealth.change === null
-                    ? "No snapshot comparison"
+                    ? t("No snapshot comparison", "Немає знімка для порівняння")
                     : `${dashboard.wealth.change >= 0 ? "+" : "−"}${money(Math.abs(dashboard.wealth.change))}`}
-                  <span>{dashboard.wealth.changePercent === null ? dashboard.wealth.asOfLabel : `${dashboard.wealth.changePercent >= 0 ? "+" : ""}${dashboard.wealth.changePercent.toFixed(1)}% between snapshots`}</span>
+                  <span>{dashboard.wealth.changePercent === null ? dashboard.wealth.asOfLabel : `${dashboard.wealth.changePercent >= 0 ? "+" : ""}${dashboard.wealth.changePercent.toFixed(1)}% ${t("between snapshots", "між знімками")}`}</span>
                 </div>
 
-                <div className="worth-chart" role="img" aria-label={`Net worth history ending at ${money(dashboard.wealth.netWorth)}`}>
+                <div className="worth-chart" role="img" aria-label={`${t("Net worth history ending at", "Історія чистих активів, останнє значення")} ${money(dashboard.wealth.netWorth)}`}>
                   <div className="chart-scale">
-                    <span>{formatCompact(worthMaximum, currency)}</span>
-                    <span>{formatCompact((worthMaximum + worthMinimum) / 2, currency)}</span>
-                    <span>{formatCompact(worthMinimum, currency)}</span>
+                    <span>{formatCompact(worthMaximum, currency, intlLocale)}</span>
+                    <span>{formatCompact((worthMaximum + worthMinimum) / 2, currency, intlLocale)}</span>
+                    <span>{formatCompact(worthMinimum, currency, intlLocale)}</span>
                   </div>
                   <div className="chart-stage">
                     <span className="chart-grid-line top" /><span className="chart-grid-line middle" /><span className="chart-grid-line bottom" />
@@ -549,18 +561,18 @@ export default function DashboardPage({ user }: { user: AuthUser }) {
                         style={{ height }}
                         key={dashboard.wealth.points[index].id}
                       />
-                    )) : <span className="chart-empty">No snapshots for this period</span>}
+                    )) : <span className="chart-empty">{t("No snapshots for this period", "Немає знімків за цей період")}</span>}
                   </div>
                   <div className="chart-labels">
                     {dashboard.wealth.points.map((point) => (
-                      <span key={point.id}>{new Intl.DateTimeFormat("en-US", { month: "short", timeZone: "UTC" }).format(new Date(point.recordedAt))}</span>
+                      <span key={point.id}>{new Intl.DateTimeFormat(intlLocale, { month: "short", timeZone: "UTC" }).format(new Date(point.recordedAt))}</span>
                     ))}
                   </div>
                 </div>
 
                 <div className="worth-breakdown">
-                  <div><span className="legend-dot assets" /><p><small>Assets</small><strong>{money(dashboard.wealth.assets)}</strong></p></div>
-                  <div><span className="legend-dot liabilities" /><p><small>Liabilities</small><strong>{money(dashboard.wealth.liabilities)}</strong></p></div>
+                  <div><span className="legend-dot assets" /><p><small>{t("Assets", "Активи")}</small><strong>{money(dashboard.wealth.assets)}</strong></p></div>
+                  <div><span className="legend-dot liabilities" /><p><small>{t("Liabilities", "Зобов’язання")}</small><strong>{money(dashboard.wealth.liabilities)}</strong></p></div>
                   <div className="worth-note"><Sparkles size={15} /><span>{dashboard.wealth.asOfLabel}</span></div>
                 </div>
               </article>
@@ -568,10 +580,10 @@ export default function DashboardPage({ user }: { user: AuthUser }) {
               <article className="card budget-card">
                 <div className="card-heading compact">
                   <div>
-                    <p className="eyebrow">Monthly budget</p>
-                    <h3>{dashboard.finance.totalBudget === 0 ? "No budget set" : dashboard.finance.budgetRemaining >= 0 ? "On track" : "Over budget"}</h3>
+                    <p className="eyebrow">{t("Monthly budget", "Місячний бюджет")}</p>
+                    <h3>{dashboard.finance.totalBudget === 0 ? t("No budget set", "Бюджет не задано") : dashboard.finance.budgetRemaining >= 0 ? t("On track", "За планом") : t("Over budget", "Бюджет перевищено")}</h3>
                   </div>
-                  <button className="icon-button small" aria-label="Log a budget expense" onClick={() => openLog("Expense")}><MoreHorizontal size={19} /></button>
+                  <Link className="quiet-button" href={{ pathname: "/money", query: { period: selectedPeriod.key, currency, view: "cashflow" } }}>{t("Open cash flow", "Відкрити рух коштів")} <ArrowUpRight size={15} /></Link>
                 </div>
                 <div className="budget-summary">
                   <div
@@ -584,15 +596,15 @@ export default function DashboardPage({ user }: { user: AuthUser }) {
                   >
                     <div>
                       <strong>{dashboard.finance.totalBudget > 0 ? `${Math.min(Math.round((dashboard.finance.spent / dashboard.finance.totalBudget) * 100), 100)}%` : "—"}</strong>
-                      <span>used</span>
+                      <span>{t("used", "використано")}</span>
                     </div>
                   </div>
                   <div className="budget-numbers">
-                    <small>Spent this month</small>
+                    <small>{t("Spent this month", "Витрачено цього місяця")}</small>
                     <strong>{money(dashboard.finance.spent)} <span>{dashboard.finance.totalBudget > 0 ? `/ ${money(dashboard.finance.totalBudget)}` : ""}</span></strong>
                     <p>{dashboard.finance.totalBudget > 0
-                      ? `${money(Math.abs(dashboard.finance.budgetRemaining))} ${dashboard.finance.budgetRemaining >= 0 ? "left" : "over"} · ${selectedPeriod.isCurrent ? `${selectedPeriod.daysRemaining} days remaining` : "month closed"}`
-                      : "Add monthly budgets through the finance API"}</p>
+                      ? `${money(Math.abs(dashboard.finance.budgetRemaining))} ${dashboard.finance.budgetRemaining >= 0 ? t("left", "залишилося") : t("over", "понад бюджет")} · ${selectedPeriod.isCurrent ? `${selectedPeriod.daysRemaining} ${t("days remaining", "днів залишилося")}` : t("month closed", "місяць завершено")}`
+                      : t("Add monthly budgets through the finance API", "Додайте місячні бюджети через фінансовий модуль")}</p>
                   </div>
                 </div>
                 <div className="budget-categories">
@@ -601,27 +613,32 @@ export default function DashboardPage({ user }: { user: AuthUser }) {
                       ? Math.min((category.used / category.limit) * 100, 100)
                       : category.used > 0 ? 100 : 0;
                     return (
-                      <button className="category-row" key={category.name} onClick={() => openLog("Expense", category.name)}>
+                      <Link
+                        className="category-row"
+                        href={{ pathname: "/money", query: { period: selectedPeriod.key, currency, category: category.name } }}
+                        aria-label={t(`View ${category.name} transactions`, `Переглянути транзакції категорії ${category.name}`)}
+                        key={category.name}
+                      >
                         <span className={`category-marker ${category.color}`} />
                         <span className="category-name">{category.name}</span>
                         <span className="category-track"><span className={category.color} style={{ width: `${percentage}%` }} /></span>
                         <span className="category-value">{money(category.used)} {category.limit !== null && <small>/ {money(category.limit)}</small>}</span>
-                      </button>
+                      </Link>
                     );
-                  }) : <p className="card-empty">No spending or budgets logged for this month.</p>}
+                  }) : <p className="card-empty">{t("No spending or budgets logged for this month.", "Цього місяця немає витрат або бюджетів.")}</p>}
                 </div>
                 <div className="budget-footer">
-                  <span>Income <strong>{money(dashboard.finance.income)}</strong></span>
-                  <span>Savings rate <strong>{dashboard.finance.income > 0 ? `${Math.max(Math.round((dashboard.finance.net / dashboard.finance.income) * 100), 0)}%` : "—"}</strong></span>
+                  <span>{t("Income", "Дохід")} <strong>{money(dashboard.finance.income)}</strong></span>
+                  <span>{t("Savings rate", "Рівень заощаджень")} <strong>{dashboard.finance.income > 0 ? `${Math.max(Math.round((dashboard.finance.net / dashboard.finance.income) * 100), 0)}%` : "—"}</strong></span>
                 </div>
               </article>
 
               <article className="card workout-card" id="training">
                 <div className="card-heading compact">
-                  <div><p className="eyebrow">Training</p><h3>{dashboard.training.weekCount} of 4 workouts</h3></div>
-                  <span className="status-pill lime"><Zap size={13} /> {dashboard.training.monthCount} this month</span>
+                  <div><p className="eyebrow">{t("Training", "Тренування")}</p><h3>{dashboard.training.weekCount} {t("workouts this week", "тренувань цього тижня")}</h3></div>
+                  <Link className="status-pill lime" href={{ pathname: "/training", query: { period: selectedPeriod.key } }} aria-label={t("Open training dashboard", "Відкрити панель тренувань")}><Zap size={13} /> {dashboard.training.monthCount} {t("this month", "цього місяця")} <ArrowUpRight size={13} /></Link>
                 </div>
-                <p className="card-subtitle">{remainingWorkouts === 0 ? "Weekly goal complete. Nicely done." : `${remainingWorkouts} ${remainingWorkouts === 1 ? "session" : "sessions"} left in this reference week.`}</p>
+                <p className="card-subtitle">{dashboard.training.weekCount === 0 ? t("No sessions in this reference week yet.", "У вибраному тижні тренувань ще немає.") : t("Completed sessions in the selected week.", "Завершені тренування у вибраному тижні.")}</p>
                 <div className="week-row" role="group" aria-label={`${dashboard.training.weekCount} workouts completed in the reference week`}>
                   {weekDays.map((day) => {
                     const complete = completedWorkoutDates.has(day.key);
@@ -636,31 +653,31 @@ export default function DashboardPage({ user }: { user: AuthUser }) {
                 <div className="next-session">
                   <span className="session-icon"><Dumbbell size={19} /></span>
                   <span>
-                    <small>{dashboard.training.latestWorkout ? "Latest session" : "Training log"}</small>
-                    <strong>{dashboard.training.latestWorkout?.name ?? "No sessions yet"}</strong>
+                    <small>{dashboard.training.latestWorkout ? t("Latest session", "Останнє тренування") : t("Training log", "Журнал тренувань")}</small>
+                    <strong>{dashboard.training.latestWorkout?.name ?? t("No sessions yet", "Тренувань ще немає")}</strong>
                     <em>{dashboard.training.latestWorkout
-                      ? `${dashboard.training.latestWorkout.exerciseCount} exercises · ${dashboard.training.latestWorkout.durationMinutes ?? 0} min`
-                      : "Add your first completed workout"}</em>
+                      ? `${dashboard.training.latestWorkout.exerciseCount} ${t("exercises", "вправ")} · ${dashboard.training.latestWorkout.durationMinutes ?? 0} ${t("min", "хв")}`
+                      : t("Add your first completed workout", "Додайте перше завершене тренування")}</em>
                   </span>
-                  <button onClick={() => openLog("Workout")}>Log <ArrowRight size={15} /></button>
+                  <button onClick={() => openLog("Workout")}>{t("Log", "Записати")} <ArrowRight size={15} /></button>
                 </div>
                 <div className="workout-stat">
-                  <span><small>Monthly volume</small><strong>{dashboard.training.totalVolumeKg.toLocaleString()} kg</strong></span>
-                  <span><small>Active time</small><strong>{formatDuration(dashboard.training.totalDurationMinutes)}</strong></span>
+                  <span><small>{t("Monthly volume", "Місячний обсяг")}</small><strong>{dashboard.training.totalVolumeKg.toLocaleString(intlLocale)} {t("kg", "кг")}</strong></span>
+                  <span><small>{t("Active time", "Активний час")}</small><strong>{formatDuration(dashboard.training.totalDurationMinutes, locale === "uk")}</strong></span>
                 </div>
               </article>
 
               <article className="card body-card" id="body">
                 <div className="card-heading compact">
-                  <div><p className="eyebrow">Body & nutrition</p><h3>{dashboard.health.weight === null ? "No weight" : `${dashboard.health.weight.toFixed(1)} kg`}</h3></div>
-                  <span className="status-pill blue">
-                    {dashboard.health.weightChange !== null && dashboard.health.weightChange > 0
+                  <div><p className="eyebrow">{t("Body & nutrition", "Тіло й харчування")}</p><h3>{dashboard.health.weight === null ? t("No weight", "Немає ваги") : `${dashboard.health.weight.toFixed(1)} ${t("kg", "кг")}`}</h3></div>
+                  <Link className="status-pill blue" href={{ pathname: "/body", query: { period: selectedPeriod.key } }} aria-label={t("Open body dashboard", "Відкрити панель тіла")}>
+                    {dashboard.health.weightChange !== null && (dashboard.health.weightChange > 0
                       ? <ArrowUpRight size={13} />
-                      : <ArrowDownRight size={13} />}
-                    {dashboard.health.weightChange === null ? "No trend" : `${Math.abs(dashboard.health.weightChange).toFixed(1)} kg`}
-                  </span>
+                      : <ArrowDownRight size={13} />)}
+                    {dashboard.health.weightChange === null ? t("No trend", "Немає тренду") : `${Math.abs(dashboard.health.weightChange).toFixed(1)} ${t("kg", "кг")}`}
+                  </Link>
                 </div>
-                <div className="weight-chart" role="img" aria-label={dashboard.health.weight === null ? "No weight data for this period" : `Weight trend ends at ${dashboard.health.weight.toFixed(1)} kilograms`}>
+                <div className="weight-chart" role="img" aria-label={dashboard.health.weight === null ? t("No weight data for this period", "Немає даних про вагу за цей період") : t(`Weight trend ends at ${dashboard.health.weight.toFixed(1)} kilograms`, `Останнє значення ваги: ${dashboard.health.weight.toFixed(1)} кілограма`)}>
                   {weightChart ? (
                     <>
                       <svg viewBox="0 0 360 90" preserveAspectRatio="none" aria-hidden="true">
@@ -668,33 +685,33 @@ export default function DashboardPage({ user }: { user: AuthUser }) {
                         <path className="weight-line" d={weightChart.line} />
                         <circle cx={weightChart.last.x} cy={weightChart.last.y} r="4" />
                       </svg>
-                      <span className="weight-goal">Range {weightChart.minimum.toFixed(1)}–{weightChart.maximum.toFixed(1)} kg</span>
+                      <span className="weight-goal">{t("Range", "Діапазон")} {weightChart.minimum.toFixed(1)}–{weightChart.maximum.toFixed(1)} {t("kg", "кг")}</span>
                     </>
-                  ) : <p className="chart-empty">Log a weight entry to start the trend.</p>}
+                  ) : <p className="chart-empty">{t("Log a weight entry to start the trend.", "Додайте вагу, щоб побачити тренд.")}</p>}
                 </div>
                 <div className="macro-list" id="nutrition">
                   <div className="macro-row">
-                    <span><Flame size={16} /> Calories</span>
+                    <span><Flame size={16} /> {t("Calories", "Калорії")}</span>
                     <span className="macro-track"><span className="calorie-fill" style={{ width: `${calorieTarget ? Math.min((calories / calorieTarget) * 100, 100) : calories > 0 ? 100 : 0}%` }} /></span>
-                    <strong>{calories.toLocaleString()} <small>{calorieTarget ? `/ ${calorieTarget.toLocaleString()}` : "/ no target"}</small></strong>
+                    <strong>{calories.toLocaleString(intlLocale)} <small>{calorieTarget ? `/ ${calorieTarget.toLocaleString(intlLocale)}` : t("/ no target", "/ без цілі")}</small></strong>
                   </div>
                   <div className="macro-row">
-                    <span><Sparkles size={16} /> Protein</span>
+                    <span><Sparkles size={16} /> {t("Protein", "Білок")}</span>
                     <span className="macro-track"><span className="protein-fill" style={{ width: `${proteinShare}%` }} /></span>
-                    <strong>{protein.toLocaleString()}g <small>{proteinShare}% kcal</small></strong>
+                    <strong>{protein.toLocaleString(intlLocale)}{t("g", "г")} <small>{proteinShare}% {t("kcal", "ккал")}</small></strong>
                   </div>
                 </div>
-                <button className="text-action" onClick={() => openLog("Meal")}>Log food for {formatShortDate(selectedPeriod.referenceDate)} <ArrowRight size={15} /></button>
+                <button className="text-action" onClick={() => openLog("Meal")}>{t("Log nutrition for", "Записати харчування за")} {formatShortDate(selectedPeriod.referenceDate, intlLocale)} <ArrowRight size={15} /></button>
               </article>
 
               <article className="card savings-card">
                 <div className="card-heading compact">
-                  <div><p className="eyebrow">Savings goals</p><h3>{formatCompact(totalGoalCurrent, currency)} set aside</h3></div>
-                  <button className="icon-button small" onClick={() => openLog("Savings")} aria-label="Add savings"><Plus size={18} /></button>
+                  <div><p className="eyebrow">{t("Savings goals", "Цілі заощаджень")}</p><h3>{formatCompact(totalGoalCurrent, currency, intlLocale)} {t("set aside", "відкладено")}</h3></div>
+                  <Link className="quiet-button" href={{ pathname: "/money", query: { period: selectedPeriod.key, currency, view: "wealth" } }}>{t("Open goals", "Відкрити цілі")} <ArrowUpRight size={15} /></Link>
                 </div>
                 <p className="card-subtitle">{dashboard.wealth.savedThisPeriod === 0
-                  ? `No goal contributions in ${selectedPeriod.label}.`
-                  : `${money(dashboard.wealth.savedThisPeriod)} contributed in ${selectedPeriod.label}.`}</p>
+                  ? t(`No goal contributions in ${selectedPeriod.label}.`, `У ${selectedPeriod.label} внесків до цілей не було.`)
+                  : t(`${money(dashboard.wealth.savedThisPeriod)} contributed in ${selectedPeriod.label}.`, `${money(dashboard.wealth.savedThisPeriod)} внесено у ${selectedPeriod.label}.`)}</p>
                 <div className="goal-list">
                   {dashboard.goals.length > 0 ? dashboard.goals.slice(0, 2).map((goal, index) => (
                     <button className="goal-row" onClick={() => openLog("Savings")} key={goal.id}>
@@ -702,20 +719,20 @@ export default function DashboardPage({ user }: { user: AuthUser }) {
                       <span className="goal-copy">
                         <span><strong>{goal.name}</strong><em>{Math.min(Math.round(goal.progress), 100)}%</em></span>
                         <span className="goal-track"><span style={{ width: `${Math.min(goal.progress, 100)}%` }} /></span>
-                        <small>{money(goal.current)} of {money(goal.target)}</small>
+                        <small>{money(goal.current)} {t("of", "з")} {money(goal.target)}</small>
                       </span>
                     </button>
-                  )) : <p className="card-empty">No savings goals yet. Your first contribution can create one.</p>}
+                  )) : <p className="card-empty">{t("No savings goals yet. Your first contribution can create one.", "Цілей заощаджень ще немає. Перший внесок створить ціль.")}</p>}
                 </div>
                 <div className="savings-insight"><Sparkles size={15} /><span>{dashboard.goals.length > 0
-                  ? `${dashboard.goals.length} active ${dashboard.goals.length === 1 ? "goal" : "goals"} with a ${money(totalGoalTarget)} combined target.`
-                  : "Quick log a savings entry to create your first goal."}</span></div>
+                  ? t(`${dashboard.goals.length} active ${dashboard.goals.length === 1 ? "goal" : "goals"} with a ${money(totalGoalTarget)} combined target.`, `Активних цілей: ${dashboard.goals.length}; загальна сума — ${money(totalGoalTarget)}.`)
+                  : t("Quick log a savings entry to create your first goal.", "Додайте заощадження, щоб створити першу ціль.")}</span></div>
               </article>
 
               <article className="card activity-card">
                 <div className="card-heading compact">
-                  <div><p className="eyebrow">Recent activity</p><h3>Everything you’ve logged</h3></div>
-                  <button className="quiet-button" onClick={() => openLog()}>Add entry <Plus size={15} /></button>
+                  <div><p className="eyebrow">{t("Recent activity", "Остання активність")}</p><h3>{t("Everything you’ve logged", "Усе, що ви записали")}</h3></div>
+                  <button className="quiet-button" onClick={() => openLog()}>{t("Add entry", "Додати запис")} <Plus size={15} /></button>
                 </div>
                 <div className="activity-list">
                   {dashboard.activities.length > 0 ? dashboard.activities.slice(0, 5).map((activity) => (
@@ -724,54 +741,54 @@ export default function DashboardPage({ user }: { user: AuthUser }) {
                       <span className="activity-copy"><strong>{activity.title}</strong><small>{activity.detail}</small></span>
                       <strong className="activity-value">{activity.value}</strong>
                     </div>
-                  )) : <p className="card-empty activity-empty">No entries logged for {selectedPeriod.label}.</p>}
+                  )) : <p className="card-empty activity-empty">{t(`No entries logged for ${selectedPeriod.label}.`, `За ${selectedPeriod.label} записів немає.`)}</p>}
                 </div>
               </article>
 
               <article className="card momentum-card">
-                <p className="eyebrow">Tracking coverage</p>
+                <p className="eyebrow">{t("Tracking coverage", "Повнота відстеження")}</p>
                 <div className="momentum-score"><strong>{dashboard.coverage.score}</strong><span>/ 100</span></div>
-                <h3>{dashboard.coverage.score === 100 ? "Every area has real data." : "Your dashboard is taking shape."}</h3>
+                <h3>{dashboard.coverage.score === 100 ? t("Every area has real data.", "У кожній сфері є дані.") : t("Your dashboard is taking shape.", "Ваша панель наповнюється.")}</h3>
                 <p>{dashboard.coverage.missing.length > 0
-                  ? `Add ${dashboard.coverage.missing.join(", ").toLowerCase()} entries to complete this month’s view.`
-                  : `All five tracking areas have entries in ${selectedPeriod.label}.`}</p>
+                  ? t(`Add ${dashboard.coverage.missing.join(", ").toLowerCase()} entries to complete this month’s view.`, `Додайте записи: ${dashboard.coverage.missing.map(areaLabel).join(", ").toLowerCase()}, щоб завершити огляд місяця.`)
+                  : t(`All five tracking areas have entries in ${selectedPeriod.label}.`, `У всіх п’яти сферах є записи за ${selectedPeriod.label}.`)}</p>
                 <div className="momentum-tags">
-                  {(["Money", "Training", "Nutrition"] as const).map((area) => {
+                  {(["Money", "Training", "Nutrition", "Body", "Savings"] as const).map((area) => {
                     const complete = dashboard.coverage.tracked.includes(area);
-                    return <span className={complete ? "" : "watch"} key={area}>{complete ? <CheckCircle2 size={14} /> : <Flame size={14} />}{area}</span>;
+                    return <span className={complete ? "" : "watch"} key={area}>{complete ? <CheckCircle2 size={14} /> : <Flame size={14} />}{locale === "uk" ? areaLabel(area) : area}</span>;
                   })}
                 </div>
               </article>
             </section>
-          </>
+          </div>
         )}
 
         <footer className="page-footer">
-          <span>Better Tracker is showing records from your FastAPI backend.</span>
-          <button onClick={refreshData}><RotateCcw size={14} className={loading ? "spin" : ""} /> Refresh data</button>
+          <span>{t("Better Tracker is showing records from your FastAPI backend.", "Better Tracker показує дані з вашого сервера FastAPI.")}</span>
+          <button onClick={refreshData}><RotateCcw size={14} className={loading ? "spin" : ""} /> {t("Refresh data", "Оновити дані")}</button>
         </footer>
       </main>
 
-      <nav className="mobile-nav" aria-label="Mobile navigation">
-        {navigation.map(({ label, icon: Icon, href }) => (
-          <Link className={label === "Overview" ? "active" : ""} key={label} href={href} aria-label={label} aria-current={label === "Overview" ? "page" : undefined}>
-            <Icon size={19} /><span>{label}</span>
+      <nav className="mobile-nav" aria-label={t("Mobile navigation", "Мобільна навігація")}>
+        {navigation.map(({ label, uk, icon: Icon, href }) => (
+          <Link className={href === "/" ? "active" : ""} key={label} href={href} aria-label={t(label, uk)} aria-current={href === "/" ? "page" : undefined}>
+            <Icon size={19} /><span>{t(label, uk)}</span>
           </Link>
         ))}
-        <button className="mobile-add" onClick={() => openLog()} aria-label="Quick log"><Plus size={23} /></button>
+        <button className="mobile-add" onClick={() => openLog()} aria-label={t("Quick log", "Швидкий запис")} disabled={!dashboard || dashboardStale}><Plus size={23} /></button>
       </nav>
 
       {dialogOpen && (
         <div className="dialog-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target && !saving) setDialogOpen(false); }}>
           <section className="quick-dialog" role="dialog" aria-modal="true" aria-labelledby="quick-log-title" ref={dialogRef}>
             <div className="dialog-header">
-              <div><p className="eyebrow">Quick log</p><h2 id="quick-log-title">Add to your backend</h2></div>
-              <button className="icon-button" onClick={() => setDialogOpen(false)} aria-label="Close quick log" disabled={saving}><X size={20} /></button>
+              <div><p className="eyebrow">{t("Quick log", "Швидкий запис")}</p><h2 id="quick-log-title">{t("Add to your backend", "Додати запис")}</h2></div>
+              <button className="icon-button" onClick={() => setDialogOpen(false)} aria-label={t("Close quick log", "Закрити швидкий запис")} disabled={saving}><X size={20} /></button>
             </div>
-            <div className="log-tabs" aria-label="Entry type">
+            <div className="log-tabs" aria-label={t("Entry type", "Тип запису")}>
               {logTypes.map(({ label, icon: Icon }) => (
                 <button type="button" aria-pressed={logType === label} className={logType === label ? "active" : ""} key={label} onClick={() => setLogType(label)} disabled={saving}>
-                  <Icon size={17} /><span>{label}</span>
+                  <Icon size={17} /><span>{logLabel(label)}</span>
                 </button>
               ))}
             </div>
@@ -779,71 +796,71 @@ export default function DashboardPage({ user }: { user: AuthUser }) {
               {logType === "Savings" ? (
                 savingsGoals.length > 0 ? (
                   <label>
-                    <span>Goal</span>
+                    <span>{t("Goal", "Ціль")}</span>
                     <select name="goalId" defaultValue={savingsGoals[0].id} required>
                       {savingsGoals.map((goal) => <option value={goal.id} key={goal.id}>{goal.name}</option>)}
                     </select>
                   </label>
                 ) : (
                   <>
-                    <label><span>New goal name</span><input name="newGoalName" required defaultValue="Emergency fund" maxLength={120} /></label>
-                    <label><span>Goal target</span><div className="input-unit"><input name="newGoalTarget" type="number" min="0.01" step="0.01" defaultValue="12000" required /><em>{currency}</em></div></label>
+                    <label><span>{t("New goal name", "Назва нової цілі")}</span><input name="newGoalName" required placeholder={t("Emergency fund", "Резервний фонд")} maxLength={120} /></label>
+                    <label><span>{t("Goal target", "Сума цілі")}</span><div className="input-unit"><input name="newGoalTarget" type="number" min="0.01" step="0.01" placeholder="12000" required /><em>{currencyKey}</em></div></label>
                   </>
                 )
               ) : (
                 <label>
-                  <span>{logType === "Workout" ? "Session name" : logType === "Meal" ? "Meal or food" : logType === "Weight" ? "Note" : "Description"}</span>
+                  <span>{logType === "Workout" ? t("Session name", "Назва тренування") : logType === "Meal" ? t("Day note", "Нотатка про день") : logType === "Weight" ? t("Note", "Примітка") : t("Description", "Опис")}</span>
                   <input
                     name="description"
                     required={logType !== "Weight"}
-                    defaultValue={logType === "Expense" ? "Coffee & lunch" : logType === "Workout" ? "Lower body" : logType === "Meal" ? "Dinner" : ""}
-                    placeholder="Add a short description"
+                    placeholder={logType === "Expense" ? t("Coffee & lunch", "Кава та обід") : logType === "Workout" ? t("Lower body", "Нижня частина тіла") : logType === "Meal" ? t("Daily nutrition", "Харчування за день") : t("Add a short description", "Додайте короткий опис")}
                     maxLength={logType === "Workout" ? 200 : 500}
                   />
                 </label>
               )}
               {logType === "Expense" && (
                 <label>
-                  <span>Category</span>
-                  <select name="category" defaultValue={defaultCategory}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select>
+                  <span>{t("Category", "Категорія")}</span>
+                  <select name="category" defaultValue={defaultCategory}>{categoryOptions.map((category) => <option key={category} value={category}>{locale === "uk" ? ({ Housing: "Житло", Food: "Їжа", Transport: "Транспорт", Lifestyle: "Стиль життя", Other: "Інше" })[category] ?? category : category}</option>)}</select>
                 </label>
               )}
               <div className="form-grid">
                 {logType === "Workout" ? (
-                  <label><span>Duration</span><div className="input-unit"><input name="duration" type="number" min="1" defaultValue="55" required /><em>min</em></div></label>
+                  <label><span>{t("Duration", "Тривалість")}</span><div className="input-unit"><input name="duration" type="number" min="1" placeholder="55" required /><em>{t("min", "хв")}</em></div></label>
                 ) : (
                   <label>
-                    <span>{logType === "Meal" ? "Calories" : logType === "Weight" ? "Weight" : "Amount"}</span>
+                    <span>{logType === "Meal" ? t("Calories", "Калорії") : logType === "Weight" ? t("Weight", "Вага") : t("Amount", "Сума")}</span>
                     <div className="input-unit">
                       <input
                         name="value"
                         type="number"
                         min={logType === "Meal" ? "1" : "0.01"}
                         step={logType === "Meal" ? "1" : logType === "Weight" ? "0.01" : "0.01"}
-                        defaultValue={logType === "Meal" ? "540" : logType === "Weight" ? dashboard?.health.weight ?? "" : "25"}
+                        defaultValue={logType === "Weight" ? dashboard?.health.weight ?? "" : ""}
+                        placeholder={logType === "Meal" ? "2100" : logType === "Weight" ? "75.4" : "25.00"}
                         required
                       />
-                      <em>{logType === "Meal" ? "kcal" : logType === "Weight" ? "kg" : currency}</em>
+                      <em>{logType === "Meal" ? t("kcal", "ккал") : logType === "Weight" ? t("kg", "кг") : currencyKey}</em>
                     </div>
                   </label>
                 )}
                 {logType === "Meal" ? (
-                  <label><span>Protein</span><div className="input-unit"><input name="protein" type="number" min="0" step="0.01" defaultValue="32" /><em>g</em></div></label>
+                  <label><span>{t("Protein", "Білок")}</span><div className="input-unit"><input name="protein" type="number" min="0" step="0.01" placeholder="150" /><em>{t("g", "г")}</em></div></label>
                 ) : (
-                  <label><span>Date</span><input name="date" type="date" min={selectedPeriod.startDate} max={selectedPeriod.endDate} defaultValue={selectedPeriod.referenceDate} required /></label>
+                  <label><span>{t("Date", "Дата")}</span><input name="date" type="date" min={selectedPeriod.startDate} max={selectedPeriod.endDate} defaultValue={selectedPeriod.referenceDate} required /></label>
                 )}
               </div>
               {logType === "Meal" && (
                 <div className="form-grid">
-                  <label><span>Calorie target (optional)</span><div className="input-unit"><input name="calorieTarget" type="number" min="1" defaultValue={dashboard?.health.calorieTarget ?? ""} /><em>kcal</em></div></label>
-                  <label><span>Date</span><input name="date" type="date" min={selectedPeriod.startDate} max={selectedPeriod.endDate} defaultValue={selectedPeriod.referenceDate} required /></label>
+                  <label><span>{t("Calorie target (optional)", "Ціль калорій (необов’язково)")}</span><div className="input-unit"><input name="calorieTarget" type="number" min="1" defaultValue={dashboard?.health.calorieTarget ?? ""} /><em>{t("kcal", "ккал")}</em></div></label>
+                  <label><span>{t("Date", "Дата")}</span><input name="date" type="date" min={selectedPeriod.startDate} max={selectedPeriod.endDate} defaultValue={selectedPeriod.referenceDate} required /></label>
                 </div>
               )}
-              <div className="dialog-note"><Sparkles size={16} /><span>This saves directly to FastAPI and refreshes your dashboard from the database.</span></div>
+              <div className="dialog-note"><Sparkles size={16} /><span>{t("This saves directly to FastAPI and refreshes your dashboard from the database.", "Запис буде збережено, а дані на панелі — оновлено.")}</span></div>
               <div className="dialog-actions">
-                <button type="button" className="secondary-button" onClick={() => setDialogOpen(false)} disabled={saving}>Cancel</button>
+                <button type="button" className="secondary-button" onClick={() => setDialogOpen(false)} disabled={saving}>{t("Cancel", "Скасувати")}</button>
                 <button className="submit-button" type="submit" disabled={saving}>
-                  {saving ? <RotateCcw size={17} className="spin" /> : <Check size={17} />} {saving ? "Saving…" : `Save ${logType.toLowerCase()}`}
+                  {saving ? <RotateCcw size={17} className="spin" /> : <Check size={17} />} {saving ? t("Saving…", "Зберігаємо…") : `${t("Save", "Зберегти")}: ${logLabel(logType).toLowerCase()}`}
                 </button>
               </div>
             </form>
@@ -855,10 +872,14 @@ export default function DashboardPage({ user }: { user: AuthUser }) {
         <div className={`toast ${toast.tone}`} role={toast.tone === "error" ? "alert" : "status"} aria-live="polite">
           <span className="toast-check">{toast.tone === "error" ? <X size={15} /> : <Check size={15} />}</span>
           <span>{toast.message}</span>
-          {toast.undo && <button onClick={undoLastLog} disabled={undoing}>{undoing ? "Undoing…" : "Undo"}</button>}
-          <button className="toast-close" onClick={() => setToast(null)} aria-label="Dismiss"><X size={15} /></button>
+          {toast.undo && <button onClick={undoLastLog} disabled={undoing}>{undoing ? t("Undoing…", "Скасовуємо…") : t("Undo", "Скасувати")}</button>}
+          <button className="toast-close" onClick={() => setToast(null)} aria-label={t("Dismiss", "Закрити")}><X size={15} /></button>
         </div>
       )}
     </div>
   );
+}
+
+export default function DashboardPage({ user, initialCurrency = "UAH" }: { user: AuthUser; initialCurrency?: string }) {
+  return <LocaleProvider user={user}><LocalizedDashboardPage user={user} initialCurrency={initialCurrency} /></LocaleProvider>;
 }

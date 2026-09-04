@@ -6,8 +6,8 @@ import { googleAuthErrorMessage, safeReturnPath } from "@/lib/auth";
 import { getAuthenticatedUser } from "@/lib/server-auth";
 
 export const metadata: Metadata = {
-  title: "Create an account — Better Tracker",
-  description: "Create your private Better Tracker workspace.",
+  title: "Створити обліковий запис — Better Tracker",
+  description: "Створіть особистий простір Better Tracker.",
 };
 
 type PageProps = {

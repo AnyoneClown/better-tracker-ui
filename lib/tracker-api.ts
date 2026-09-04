@@ -55,6 +55,7 @@ export type NetWorthPoint = {
 export type DashboardData = {
   period: Period;
   currency: string;
+  currencies: string[];
   finance: {
     spent: number;
     income: number;
@@ -360,16 +361,16 @@ export async function apiRequest<T>(
   return await response.json() as T;
 }
 
-export function getPeriodOptions(count = 3, now = new Date()): Period[] {
+export function getPeriodOptions(count = 3, now = new Date(), locale = "en-US"): Period[] {
   const options: Period[] = [];
   for (let offset = 0; offset < count; offset += 1) {
     const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - offset, 1));
-    options.push(getPeriod(`${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}`, now));
+    options.push(getPeriod(`${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}`, now, locale));
   }
   return options;
 }
 
-export function getPeriod(key: string, now = new Date()): Period {
+export function getPeriod(key: string, now = new Date(), locale = "en-US"): Period {
   const match = /^(\d{4})-(\d{2})$/.exec(key);
   const fallbackYear = now.getUTCFullYear();
   const fallbackMonth = now.getUTCMonth() + 1;
@@ -386,7 +387,7 @@ export function getPeriod(key: string, now = new Date()): Period {
 
   return {
     key: normalizedKey,
-    label: new Intl.DateTimeFormat("en-US", {
+    label: new Intl.DateTimeFormat(locale, {
       month: "long",
       year: "numeric",
       timeZone: "UTC",
@@ -401,9 +402,9 @@ export function getPeriod(key: string, now = new Date()): Period {
   };
 }
 
-function activityDate(date: string, period: Period): string {
-  if (date === period.referenceDate && period.isCurrent) return "Today";
-  return new Intl.DateTimeFormat("en-US", {
+function activityDate(date: string, period: Period, locale: string): string {
+  if (date === period.referenceDate && period.isCurrent) return locale === "uk-UA" ? "Сьогодні" : "Today";
+  return new Intl.DateTimeFormat(locale, {
     day: "numeric",
     month: "short",
     timeZone: "UTC",
@@ -434,9 +435,11 @@ function workoutExerciseCount(workout: Workout): number {
 export async function fetchDashboard(
   periodKey: string,
   signal?: AbortSignal,
+  locale = "en-US",
+  currency = "UAH",
 ): Promise<DashboardData> {
-  const period = getPeriod(periodKey);
-  const currency = "USD";
+  const period = getPeriod(periodKey, new Date(), locale);
+  const uk = locale === "uk-UA";
   const financeQuery = queryString({
     year: period.year,
     month: period.month,
@@ -465,6 +468,7 @@ export async function fetchDashboard(
     wealth,
     goalList,
     snapshotList,
+    currencies,
   ] = await Promise.all([
     request<FinanceSummaryResponse>(`/finance/summary?${financeQuery}`),
     request<ListResponse<FinancialTransaction>>(`/finance/transactions?${dateQuery}&currency=${currency}`),
@@ -476,6 +480,7 @@ export async function fetchDashboard(
     request<WealthSummary>(`/wealth/summary?currency=${currency}`),
     request<ListResponse<SavingsGoalResponse>>(`/wealth/savings-goals?currency=${currency}&limit=100`),
     request<ListResponse<NetWorthSnapshot>>(`/wealth/net-worth-snapshots?currency=${currency}&limit=100`),
+    request<string[]>("/finance/currencies"),
   ]);
 
   const contributionPages = await Promise.all(
@@ -576,8 +581,8 @@ export async function fetchDashboard(
       id: `transaction-${item.id}`,
       kind: item.kind === "expense" ? "Expense" : "Income",
       title: item.description || titleCase(item.category),
-      detail: `${titleCase(item.category)} · ${activityDate(item.occurred_on, period)}${item.hold ? " · Pending" : item.excluded_from_summary ? " · Excluded" : ""}`,
-      value: `${item.kind === "expense" ? "−" : "+"}${formatMoney(numberFrom(item.amount), item.currency)}`,
+      detail: `${titleCase(item.category)} · ${activityDate(item.occurred_on, period, locale)}${item.hold ? ` · ${uk ? "Очікує" : "Pending"}` : item.excluded_from_summary ? ` · ${uk ? "Виключено" : "Excluded"}` : ""}`,
+      value: `${item.kind === "expense" ? "−" : "+"}${formatMoney(numberFrom(item.amount), item.currency, locale)}`,
       tone: item.kind === "expense" ? "orange" : "green",
       occurredAt: dateOnlySortKey(item.occurred_on, item.created_at),
     })),
@@ -585,27 +590,27 @@ export async function fetchDashboard(
       id: `workout-${item.id}`,
       kind: "Workout",
       title: item.name,
-      detail: `${item.duration_minutes ?? 0} min · ${activityDate(item.performed_at.slice(0, 10), period)}`,
+      detail: `${item.duration_minutes ?? 0} ${uk ? "хв" : "min"} · ${activityDate(item.performed_at.slice(0, 10), period, locale)}`,
       value: workoutExerciseCount(item) > 0
-        ? `${workoutExerciseCount(item)} exercises`
-        : "Completed",
+        ? `${workoutExerciseCount(item)} ${uk ? "вправ" : "exercises"}`
+        : uk ? "Завершено" : "Completed",
       tone: "purple",
       occurredAt: item.performed_at,
     })),
     ...nutrition.items.map((item): Activity => ({
       id: `nutrition-${item.id}`,
       kind: "Meal",
-      title: item.notes || "Daily nutrition",
-      detail: `Nutrition · ${activityDate(item.recorded_on, period)}`,
-      value: `${item.calories.toLocaleString()} kcal`,
+      title: item.notes || (uk ? "Харчування за день" : "Daily nutrition"),
+      detail: `${uk ? "Харчування" : "Nutrition"} · ${activityDate(item.recorded_on, period, locale)}`,
+      value: `${item.calories.toLocaleString(locale)} ${uk ? "ккал" : "kcal"}`,
       tone: "green",
       occurredAt: dateOnlySortKey(item.recorded_on, item.created_at),
     })),
     ...weights.items.map((item): Activity => ({
       id: `weight-${item.id}`,
       kind: "Weight",
-      title: item.notes || "Weight check-in",
-      detail: `Body · ${activityDate(item.recorded_on, period)}`,
+      title: item.notes || (uk ? "Зважування" : "Weight check-in"),
+      detail: `${uk ? "Тіло" : "Body"} · ${activityDate(item.recorded_on, period, locale)}`,
       value: `${numberFrom(item.weight_kg).toFixed(1)} kg`,
       tone: "blue",
       occurredAt: dateOnlySortKey(item.recorded_on, item.created_at),
@@ -613,9 +618,9 @@ export async function fetchDashboard(
     ...contributions.map((item): Activity => ({
       id: `savings-${item.id}`,
       kind: "Savings",
-      title: goalNames.get(item.goal_id) ?? "Savings goal",
-      detail: `Savings · ${activityDate(item.occurred_on, period)}`,
-      value: `${item.kind === "withdrawal" ? "−" : "+"}${formatMoney(numberFrom(item.amount), currency)}`,
+      title: goalNames.get(item.goal_id) ?? (uk ? "Ціль заощаджень" : "Savings goal"),
+      detail: `${uk ? "Заощадження" : "Savings"} · ${activityDate(item.occurred_on, period, locale)}`,
+      value: `${item.kind === "withdrawal" ? "−" : "+"}${formatMoney(numberFrom(item.amount), currency, locale)}`,
       tone: item.kind === "withdrawal" ? "orange" : "green",
       occurredAt: dateOnlySortKey(item.occurred_on, item.created_at),
     })),
@@ -640,6 +645,7 @@ export async function fetchDashboard(
   return {
     period,
     currency: finance.currency,
+    currencies: Array.from(new Set(["UAH", currency, ...currencies])),
     finance: {
       spent: numberFrom(finance.total_expenses),
       income: numberFrom(finance.total_income),
@@ -689,10 +695,10 @@ export async function fetchDashboard(
       change: wealthChange,
       changePercent: wealthChangePercent,
       asOfLabel: selectedSnapshot
-        ? `Snapshot ${activityDate(selectedSnapshot.recorded_at.slice(0, 10), period)}`
+        ? `${uk ? "Знімок" : "Snapshot"} ${activityDate(selectedSnapshot.recorded_at.slice(0, 10), period, locale)}`
         : period.isCurrent
-          ? "Current account balances"
-          : "Current balances · no period snapshot",
+          ? (uk ? "Поточні баланси рахунків" : "Current account balances")
+          : (uk ? "Поточні баланси · немає знімка за період" : "Current balances · no period snapshot"),
       points,
     },
     goals,
@@ -887,8 +893,8 @@ export async function undoQuickLog(action: UndoAction): Promise<void> {
   });
 }
 
-export function formatMoney(value: number, currency = "USD"): string {
-  return new Intl.NumberFormat("en-US", {
+export function formatMoney(value: number, currency = "USD", locale = "en-US"): string {
+  return new Intl.NumberFormat(locale, {
     style: "currency",
     currency,
     maximumFractionDigits: 2,

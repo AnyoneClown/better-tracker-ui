@@ -1,4 +1,5 @@
 import { apiRequest, getPeriod, type Period } from "@/lib/tracker-api";
+import { moneyMonthRange } from "@/lib/money-overview";
 
 export type DecimalValue = string | number;
 
@@ -136,6 +137,7 @@ export type MonobankJar = Entity & {
   balance: DecimalValue;
   goal: DecimalValue | null;
   currency: string;
+  is_tracked: boolean;
   progress_percent: DecimalValue | null;
 };
 
@@ -308,13 +310,24 @@ export function fetchMonobankConnection(
 export async function fetchMoneyData(
   periodKey: string,
   currency: string,
+  includeIgnored = false,
+  category?: string,
   signal?: AbortSignal,
 ): Promise<MoneyData> {
   const period = getPeriod(periodKey);
   const dateQuery = query({ start_date: period.startDate, end_date: period.endDate, limit: 100 });
+  const transactionQuery = query({
+    start_date: period.startDate,
+    end_date: period.endDate,
+    currency,
+    include_ignored: includeIgnored,
+    kind: category ? "expense" : undefined,
+    category,
+    limit: 100,
+  });
   const [finance, transactions, budgets, wealth, accounts, goals, snapshots, currencies, monobank] = await Promise.all([
     request<FinanceSummary>(`/finance/summary?${query({ year: period.year, month: period.month, currency })}`, signal),
-    request<ListResponse<FinancialTransaction>>(`/finance/transactions?${dateQuery}&currency=${currency}`, signal),
+    request<ListResponse<FinancialTransaction>>(`/finance/transactions?${transactionQuery}`, signal),
     request<ListResponse<MonthlyBudget>>(`/finance/budgets?${query({ year: period.year, month: period.month, currency, limit: 100 })}`, signal),
     request<WealthSummary>(`/wealth/summary?currency=${currency}`, signal),
     request<ListResponse<FinancialAccount>>(`/wealth/accounts?currency=${currency}&limit=100`, signal),
@@ -343,13 +356,72 @@ export async function fetchMoneyData(
 }
 
 export async function fetchMoneyTrackingSummary(
+  periodKey: string,
   currency: string,
-): Promise<Pick<MoneyData, "wealth" | "currencies">> {
-  const [wealth, currencies] = await Promise.all([
+  includeIgnored: boolean,
+  category?: string,
+): Promise<Pick<MoneyData, "finance" | "transactions" | "wealth" | "currencies">> {
+  const period = getPeriod(periodKey);
+  const transactionQuery = query({
+    start_date: period.startDate,
+    end_date: period.endDate,
+    currency,
+    include_ignored: includeIgnored,
+    kind: category ? "expense" : undefined,
+    category,
+    limit: 100,
+  });
+  const [finance, transactions, wealth, currencies] = await Promise.all([
+    request<FinanceSummary>(`/finance/summary?${query({ year: period.year, month: period.month, currency })}`),
+    request<ListResponse<FinancialTransaction>>(`/finance/transactions?${transactionQuery}`),
     request<WealthSummary>(`/wealth/summary?currency=${currency}`),
     request<string[]>("/finance/currencies"),
   ]);
-  return { wealth, currencies };
+  return { finance, transactions: transactions.items, wealth, currencies };
+}
+
+export function fetchMoneyOverview(
+  startMonth: string,
+  endMonth: string,
+  currency: string,
+  signal?: AbortSignal,
+): Promise<FinanceSummary[]> {
+  return Promise.all(moneyMonthRange(startMonth, endMonth).map((periodKey) => {
+    const period = getPeriod(periodKey);
+    return request<FinanceSummary>(`/finance/summary?${query({ year: period.year, month: period.month, currency })}`, signal);
+  }));
+}
+
+export async function fetchMoneyCategoryTransactions(
+  startMonth: string,
+  endMonth: string,
+  currency: string,
+  category: string,
+  signal?: AbortSignal,
+): Promise<FinancialTransaction[]> {
+  if (!category) return [];
+  const start = getPeriod(startMonth);
+  const end = getPeriod(endMonth);
+  const loadPage = (offset: number) => request<ListResponse<FinancialTransaction>>(
+    `/finance/transactions?${query({
+      start_date: start.startDate,
+      end_date: end.endDate,
+      currency,
+      kind: "expense",
+      category,
+      offset,
+      limit: 100,
+    })}`,
+    signal,
+  );
+  const first = await loadPage(0);
+  const remaining = await Promise.all(Array.from(
+    { length: Math.max(0, Math.ceil(first.total / first.limit) - 1) },
+    (_, index) => loadPage((index + 1) * first.limit),
+  ));
+  return [first, ...remaining]
+    .flatMap((page) => page.items)
+    .filter((transaction) => !transaction.hold && !transaction.excluded_from_summary);
 }
 
 export async function fetchMoneyTransactionSummary(
@@ -394,6 +466,19 @@ export async function updateMonobankAccountTracking(
 ): Promise<MonobankAccount> {
   return apiRequest<MonobankAccount>(
     `/integrations/monobank/accounts/${accountId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ is_tracked: isTracked }),
+    },
+  );
+}
+
+export async function updateMonobankJarTracking(
+  jarId: string,
+  isTracked: boolean,
+): Promise<MonobankJar> {
+  return apiRequest<MonobankJar>(
+    `/integrations/monobank/jars/${jarId}`,
     {
       method: "PATCH",
       body: JSON.stringify({ is_tracked: isTracked }),

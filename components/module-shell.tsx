@@ -14,14 +14,7 @@ import type { ReactNode } from "react";
 
 import { AccountSummary } from "@/components/account-summary";
 import type { AuthUser } from "@/lib/auth";
-
-const navigation = [
-  { label: "Overview", icon: LayoutDashboard, href: "/" },
-  { label: "Money", icon: WalletCards, href: "/money" },
-  { label: "Training", icon: Dumbbell, href: "/training" },
-  { label: "Nutrition", icon: Utensils, href: "/nutrition" },
-  { label: "Body", icon: Scale, href: "/body" },
-];
+import { LocaleProvider, useLocale } from "@/lib/i18n";
 
 function BrandMark() {
   return (
@@ -37,12 +30,20 @@ function BrandMark() {
 
 function Navigation({ mobile = false }: { mobile?: boolean }) {
   const pathname = usePathname();
+  const { t } = useLocale();
+  const navigation = [
+    { label: t("Overview", "Огляд"), icon: LayoutDashboard, href: "/" },
+    { label: t("Money", "Фінанси"), icon: WalletCards, href: "/money" },
+    { label: t("Training", "Тренування"), icon: Dumbbell, href: "/training" },
+    { label: t("Nutrition", "Харчування"), icon: Utensils, href: "/nutrition" },
+    { label: t("Body", "Тіло"), icon: Scale, href: "/body" },
+  ];
   return (
     <>
       {navigation.map(({ label, icon: Icon, href }) => {
         const active = href === "/" ? pathname === href : pathname.startsWith(href);
         return (
-          <Link className={active ? (mobile ? "active" : "nav-item active") : (mobile ? "" : "nav-item")} href={href} key={href} aria-current={active ? "page" : undefined}>
+          <Link className={active ? (mobile ? "active" : "nav-item active") : (mobile ? "" : "nav-item")} href={href} key={href} title={label} aria-current={active ? "page" : undefined}>
             <Icon size={19} strokeWidth={1.9} />
             <span>{label}</span>
             {!mobile && active && <span className="nav-dot" />}
@@ -53,49 +54,54 @@ function Navigation({ mobile = false }: { mobile?: boolean }) {
   );
 }
 
-export function ModuleShell({ children, user }: { children: ReactNode; user: AuthUser }) {
+function LocalizedModuleShell({ children, user }: { children: ReactNode; user: AuthUser }) {
+  const { t } = useLocale();
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#main-content">{t("Skip to dashboard", "Перейти до панелі")}</a>
       <aside className="sidebar">
-        <Link className="brand" href="/" aria-label="Better Tracker home">
+        <Link className="brand" href="/" aria-label={t("Better Tracker home", "Головна Better Tracker")}>
           <span className="brand-mark"><BrandMark /></span>
           <span className="brand-wordmark">BETTER TRACKER</span>
         </Link>
 
-        <nav className="sidebar-nav" aria-label="Primary navigation">
-          <p className="nav-eyebrow">Workspace</p>
+        <nav className="sidebar-nav" aria-label={t("Primary navigation", "Основна навігація")}>
+          <p className="nav-eyebrow">{t("Workspace", "Робочий простір")}</p>
           <Navigation />
         </nav>
 
         <div className="sidebar-focus module-focus">
           <div className="focus-heading">
-            <span><ShieldCheck size={16} /> Backend connected</span>
-            <span className="focus-percent">Live</span>
+            <span><ShieldCheck size={16} /> {t("Backend connected", "Сервер підключено")}</span>
+            <span className="focus-percent">{t("Live", "Онлайн")}</span>
           </div>
-          <p>Every edit on these pages saves directly to FastAPI.</p>
           <div className="focus-bar"><span style={{ width: "100%" }} /></div>
-          <div className="focus-meta"><span>Real records</span><span>Synced</span></div>
+          <div className="focus-meta"><span>{t("Real records", "Реальні дані")}</span><span>{t("Synced", "Синхронізовано")}</span></div>
         </div>
 
         <AccountSummary user={user} />
       </aside>
 
       <header className="mobile-header">
-        <Link className="brand" href="/" aria-label="Better Tracker home">
+        <Link className="brand" href="/" aria-label={t("Better Tracker home", "Головна Better Tracker")}>
           <span className="brand-mark"><BrandMark /></span>
           <span className="brand-wordmark">BETTER TRACKER</span>
         </Link>
         <div className="mobile-header-actions">
-          <span className="live-indicator"><span /> Live</span>
+          <span className="live-indicator"><span /> {t("Live", "Онлайн")}</span>
           <AccountSummary user={user} compact />
         </div>
       </header>
 
-      <main className="main-content module-main">{children}</main>
+      <main className="main-content module-main" id="main-content">{children}</main>
 
-      <nav className="mobile-nav" aria-label="Mobile navigation">
+      <nav className="mobile-nav" aria-label={t("Mobile navigation", "Мобільна навігація")}>
         <Navigation mobile />
       </nav>
     </div>
   );
+}
+
+export function ModuleShell({ children, user }: { children: ReactNode; user: AuthUser }) {
+  return <LocaleProvider user={user}><LocalizedModuleShell user={user}>{children}</LocalizedModuleShell></LocaleProvider>;
 }

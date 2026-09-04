@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 
 const deploymentHost = process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL;
 const metadataBase = new URL(deploymentHost ? `https://${deploymentHost}` : "http://localhost:43127");
-const title = "Better Tracker — Your life, in one view";
-const description = "A calm personal dashboard for money, training, nutrition, body goals, and everyday progress.";
+const title = "Better Tracker — Усе життя одним поглядом";
+const description = "Особиста панель для фінансів, тренувань, харчування, цілей тіла та щоденного прогресу.";
 
 export const metadata: Metadata = {
   metadataBase,
@@ -30,7 +30,7 @@ export const metadata: Metadata = {
     title,
     description,
     type: "website",
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Better Tracker — your life, in one view" }],
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Better Tracker — усе життя одним поглядом" }],
   },
   twitter: {
     card: "summary_large_image",
@@ -42,7 +42,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
+    <html lang="uk" className={`${geistSans.variable} ${geistMono.variable}`}>
       <body>{children}</body>
     </html>
   );

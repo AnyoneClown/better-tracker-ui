@@ -1,10 +1,11 @@
 "use client";
 
-import { LoaderCircle, LogOut } from "lucide-react";
+import { Languages, LoaderCircle, LogOut } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import type { AuthUser } from "@/lib/auth";
+import { useLocale } from "@/lib/i18n";
 
 function initials(email: string): string {
   const name = email.split("@", 1)[0] ?? "BT";
@@ -23,7 +24,9 @@ export function AccountSummary({
   compact?: boolean;
 }) {
   const router = useRouter();
+  const { locale, setLocale, t } = useLocale();
   const [signingOut, setSigningOut] = useState(false);
+  const [changingLocale, setChangingLocale] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const signOut = async () => {
@@ -35,43 +38,74 @@ export function AccountSummary({
         method: "POST",
         credentials: "same-origin",
       });
-      if (!response.ok) throw new Error("Sign out failed");
+      if (!response.ok) throw new Error(t("Sign out failed", "Не вдалося вийти"));
       router.replace("/login");
       router.refresh();
     } catch {
-      setError("Could not sign out. Please try again.");
+      setError(t("Could not sign out. Please try again.", "Не вдалося вийти. Спробуйте ще раз."));
       setSigningOut(false);
     }
   };
 
+  const toggleLocale = async () => {
+    if (changingLocale) return;
+    setChangingLocale(true);
+    setError(null);
+    try {
+      await setLocale(locale === "uk" ? "en" : "uk");
+    } catch {
+      setError(t("Could not update language.", "Не вдалося змінити мову."));
+    } finally {
+      setChangingLocale(false);
+    }
+  };
+
+  const languageButton = (
+    <button
+      className="account-locale"
+      type="button"
+      onClick={toggleLocale}
+      disabled={changingLocale}
+      aria-label={t("Switch language to Ukrainian", "Змінити мову на англійську")}
+      title={t("Українська", "English")}
+    >
+      {changingLocale ? <LoaderCircle size={15} className="spin" /> : <Languages size={15} />}
+      <span>{locale === "uk" ? "EN" : "UA"}</span>
+    </button>
+  );
+
   if (compact) {
     return (
-      <button
-        className="icon-button account-logout compact"
-        type="button"
-        onClick={signOut}
-        disabled={signingOut}
-        aria-label={`Sign out ${user.email}`}
-        title={error ?? `Signed in as ${user.email}. Sign out`}
-      >
-        {signingOut ? <LoaderCircle size={17} className="spin" /> : <LogOut size={17} />}
-      </button>
+      <>
+        {languageButton}
+        <button
+          className="icon-button account-logout compact"
+          type="button"
+          onClick={signOut}
+          disabled={signingOut}
+          aria-label={`${t("Sign out", "Вийти")}: ${user.email}`}
+          title={error ?? `${t("Signed in as", "Вхід як")} ${user.email}. ${t("Sign out", "Вийти")}`}
+        >
+          {signingOut ? <LoaderCircle size={17} className="spin" /> : <LogOut size={17} />}
+        </button>
+      </>
     );
   }
 
   return (
-    <div className="profile-row account-row" title={`Signed in as ${user.email}`}>
+    <div className="profile-row account-row" title={`${t("Signed in as", "Вхід як")} ${user.email}`}>
       <span className="avatar" aria-hidden="true">{initials(user.email)}</span>
       <span className="profile-copy">
         <strong>{user.email}</strong>
-        <small>{error ?? "Private workspace"}</small>
+        <small>{error ?? t("Private workspace", "Особистий простір")}</small>
       </span>
+      {languageButton}
       <button
         className="account-logout"
         type="button"
         onClick={signOut}
         disabled={signingOut}
-        aria-label={`Sign out ${user.email}`}
+        aria-label={`${t("Sign out", "Вийти")}: ${user.email}`}
       >
         {signingOut ? <LoaderCircle size={16} className="spin" /> : <LogOut size={16} />}
       </button>

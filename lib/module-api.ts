@@ -177,6 +177,9 @@ export type WorkoutSet = Entity & {
   workout_id: string;
   exercise: string;
   set_number: number;
+  position: number;
+  is_completed: boolean;
+  rest_seconds: number | null;
   reps: number | null;
   weight_kg: DecimalValue | null;
   distance_km: DecimalValue | null;
@@ -189,7 +192,26 @@ export type Workout = Entity & {
   performed_at: string;
   duration_minutes: number | null;
   notes: string | null;
+  completed_at: string | null;
+  rest_timer_ends_at: string | null;
   sets: WorkoutSet[];
+};
+
+export type WorkoutRoutineExercise = Entity & {
+  routine_id: string;
+  position: number;
+  exercise: string;
+  set_count: number;
+  target_reps: number;
+  target_weight_kg: DecimalValue | null;
+  rest_seconds: number;
+  notes: string | null;
+};
+
+export type WorkoutRoutine = Entity & {
+  name: string;
+  notes: string | null;
+  exercises: WorkoutRoutineExercise[];
 };
 
 export type WorkoutExerciseSummary = {
@@ -261,6 +283,9 @@ export type TrainingData = {
   period: Period;
   summary: WorkoutSummary;
   workouts: Workout[];
+  recentWorkouts: Workout[];
+  active: Workout | null;
+  routines: WorkoutRoutine[];
 };
 
 export type NutritionData = {
@@ -475,11 +500,36 @@ export async function fetchTrainingData(periodKey: string, signal?: AbortSignal)
     date_from: `${period.startDate}T00:00:00.000Z`,
     date_to: `${period.endDate}T23:59:59.999Z`,
   });
-  const [summary, workouts] = await Promise.all([
+  const [summary, workouts, recentWorkouts, active, routines] = await Promise.all([
     request<WorkoutSummary>(`/workouts/summary?${range}`, signal),
     request<ListResponse<Workout>>(`/workouts?${range}&limit=100`, signal),
+    request<ListResponse<Workout>>("/workouts?limit=100", signal),
+    request<Workout | null>("/workouts/active", signal),
+    request<WorkoutRoutine[]>("/workout-routines", signal),
   ]);
-  return { period, summary, workouts: workouts.items };
+  return {
+    period,
+    summary,
+    workouts: workouts.items,
+    recentWorkouts: recentWorkouts.items,
+    active,
+    routines,
+  };
+}
+
+export function fetchActiveWorkout(signal?: AbortSignal): Promise<Workout | null> {
+  return request<Workout | null>("/workouts/active", signal);
+}
+
+export function fetchRecentWorkouts(signal?: AbortSignal): Promise<Workout[]> {
+  return request<ListResponse<Workout>>("/workouts?limit=100", signal)
+    .then((response) => response.items);
+}
+
+export function completeWorkout(workoutId: string): Promise<Workout> {
+  return apiRequest<Workout>(`/workouts/${workoutId}/complete`, {
+    method: "POST",
+  });
 }
 
 export async function fetchNutritionData(periodKey: string, signal?: AbortSignal): Promise<NutritionData> {

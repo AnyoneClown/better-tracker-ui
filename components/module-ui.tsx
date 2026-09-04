@@ -177,7 +177,10 @@ export function ModuleDialog({
     previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const background = Array.from(document.querySelectorAll<HTMLElement>(".sidebar, .mobile-header, .main-content, .mobile-nav"));
     background.forEach((element) => { element.inert = true; });
-    const focusTimer = window.setTimeout(() => dialogRef.current?.querySelector<HTMLElement>("input, select, textarea")?.focus(), 0);
+    const focusTimer = window.setTimeout(() => (
+      dialogRef.current?.querySelector<HTMLElement>("input, select, textarea")
+      ?? dialogRef.current?.querySelector<HTMLElement>("button")
+    )?.focus(), 0);
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !saving) {
         onClose();
